@@ -1,5 +1,4 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { useReaderStore } from '../../store/readerStore'
 import { useAnnotationStore } from '../../store/annotationStore'
 import { useUserStore } from '../../store/userStore'
@@ -9,11 +8,20 @@ import { ReadingRuler } from './ReadingRuler'
 
 const PAGE_GAP = 24
 
-export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
+/**
+ * PDFRenderer — continuous scroll view.
+ *
+ * Props:
+ *  canInteract    — true for Owner/Reader, false for Viewer.
+ *                   Viewers cannot manually scroll or create highlights.
+ *  onSyncHighlight(bookId, highlight) — called when a highlight is created,
+ *                   so it can be broadcast to other room members.
+ */
+export const PDFRenderer = ({ onScroll, readingContainerRef, canInteract = true, onSyncHighlight }) => {
   const { pdfDocument, currentPage, scrollPosition, setCurrentPage, setScrollPosition, currentBookId } = useReaderStore()
   const { addHighlight, getHighlightsForPage, toolbarPosition, selectedText, clearSelection } = useAnnotationStore()
   const { preferences } = useUserStore()
-  const { syncLocked, rulerEnabled, focusBlur, readingMode } = preferences
+  const { rulerEnabled, focusBlur } = preferences
 
   const internalRef = useRef(null)
   const containerRef = readingContainerRef || internalRef
@@ -22,6 +30,7 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
   const scrollRestored = useRef(false)
   const totalPages = pdfDocument?.numPages || 0
 
+  // Restore saved scroll position on load
   useEffect(() => {
     if (!containerRef.current || scrollRestored.current || !pdfDocument) return
     const restore = () => {
@@ -33,6 +42,25 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
     const timer = setTimeout(restore, 200)
     return () => clearTimeout(timer)
   }, [pdfDocument])
+
+  // ── Block manual scroll for viewers ──────────────────────────────────────
+  // We attach non-passive wheel + touchmove listeners directly so we can call
+  // preventDefault(). React's synthetic events are passive by default and
+  // cannot prevent scroll.  Programmatic scrollTo() (from sync events) still
+  // works because it bypasses these listeners entirely.
+  useEffect(() => {
+    if (canInteract || !containerRef.current) return
+    const el = containerRef.current
+
+    const prevent = (e) => e.preventDefault()
+    el.addEventListener('wheel',     prevent, { passive: false })
+    el.addEventListener('touchmove', prevent, { passive: false })
+
+    return () => {
+      el.removeEventListener('wheel',     prevent)
+      el.removeEventListener('touchmove', prevent)
+    }
+  }, [canInteract, containerRef])
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return
@@ -53,10 +81,14 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
     return () => container.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
+  // ── Highlight creation ────────────────────────────────────────────────────
   const handleHighlight = useCallback((highlight) => {
-    if (!currentBookId) return
+    // Viewers cannot create highlights
+    if (!canInteract || !currentBookId) return
     addHighlight(currentBookId, highlight)
-  }, [currentBookId, addHighlight])
+    // Broadcast to room members
+    onSyncHighlight?.(currentBookId, highlight)
+  }, [canInteract, currentBookId, addHighlight, onSyncHighlight])
 
   const handlePageVisible = useCallback((pageIndex) => {
     setVisiblePage(pageIndex)
@@ -96,9 +128,10 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
             scale={scale}
             highlights={getHighlightsForPage(currentBookId, i)}
             bookId={currentBookId}
-            onHighlight={handleHighlight}
+            onHighlight={canInteract ? handleHighlight : null}
             onVisible={handlePageVisible}
             estimatedHeight={pageHeights[i] || 1100}
+            canInteract={canInteract}
           />
         ))}
 
@@ -109,7 +142,8 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
         )}
       </div>
 
-      {toolbarPosition && selectedText && (
+      {/* Annotation toolbar — only for owners/readers */}
+      {canInteract && toolbarPosition && selectedText && (
         <AnnotationToolbar
           position={toolbarPosition}
           onHighlight={(color) => {
@@ -128,6 +162,16 @@ export const PDFRenderer = ({ onScroll, readingContainerRef }) => {
           }}
           onClose={clearSelection}
         />
+      )}
+
+      {/* View-only indicator for viewers */}
+      {!canInteract && (
+        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/50 text-white text-[11px] font-medium backdrop-blur-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+            View only · Owner controls the reading
+          </div>
+        </div>
       )}
     </div>
   )

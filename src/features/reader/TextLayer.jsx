@@ -10,10 +10,11 @@ const HIGHLIGHT_COLORS_CSS = {
   purple: 'rgba(233, 213, 255, 0.75)',
 }
 
-export const TextLayer = memo(({ textLayer, pageIndex, highlights = [], bookId, onHighlight, dimensions }) => {
+export const TextLayer = memo(({ textLayer, pageIndex, highlights = [], bookId, onHighlight, canInteract = true, dimensions }) => {
   const containerRef = useRef(null)
   const { toolbarPosition, selectedText } = useAnnotationStore()
-  const { createHighlight } = useTextSelection(containerRef, pageIndex, bookId, onHighlight)
+  // Only wire up text-selection handling for owners/readers
+  const { createHighlight } = useTextSelection(containerRef, pageIndex, bookId, canInteract ? onHighlight : null)
 
   if (!textLayer?.items) return null
 
@@ -38,9 +39,10 @@ export const TextLayer = memo(({ textLayer, pageIndex, highlights = [], bookId, 
             lineHeight: '1',
             position: 'absolute',
             whiteSpace: 'pre',
-            cursor: 'text',
+            cursor: canInteract ? 'text' : 'default',
             color: 'transparent',
-            userSelect: 'text',
+            userSelect: canInteract ? 'text' : 'none',
+            pointerEvents: canInteract ? 'auto' : 'none',
           }}
           data-item-index={i}
         >

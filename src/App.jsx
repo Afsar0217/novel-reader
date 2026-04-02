@@ -6,6 +6,7 @@ import { ReaderView } from './views/ReaderView'
 import { BookRequestPrompt } from './features/rooms/BookRequestPrompt'
 import { useUserStore } from './store/userStore'
 import { useRoomStore } from './store/roomStore'
+import { useSync } from './hooks/useSync'
 import { syncService } from './services/syncService'
 import { storePDF } from './services/storageService'
 import { generateBookId } from './utils/idGenerator'
@@ -20,7 +21,7 @@ export default function App() {
   const [openRoomPanelOnEnter, setOpenRoomPanelOnEnter] = useState(false)
 
   const { user, preferences, initUser } = useUserStore()
-  const { currentRoom, leaveRoom, requestedBook, clearRequestedBook } = useRoomStore()
+  const { currentRoom, leaveRoom, clearRequestedBook } = useRoomStore()
   const { addBook, openBook } = useReaderStore()
 
   useEffect(() => {
@@ -30,7 +31,21 @@ export default function App() {
     }
   }, [])
 
-  // Re-init sync whenever the active room changes
+  // ── useSync lives here so it's active the instant you join a room,
+  //    even before any PDF is open (fixes cross-device participant list
+  //    and BOOK_SET delivery to visitors on the home screen).
+  const {
+    sendScroll,
+    sendPageChange,
+    sendCursor,
+    sendHighlight,
+    sendChatMessage,
+    setChatPanelOpen,
+    sendBookSet,
+  } = useSync()
+
+  // Re-init the MQTT/BroadcastChannel transport whenever the active room changes
+  // (also covers app-reload where room is restored from localStorage).
   useEffect(() => {
     if (currentRoom && user) {
       syncService.destroy()
@@ -52,14 +67,11 @@ export default function App() {
     setOpenRoomPanelOnEnter(false)
   }, [])
 
-  // When user enters room from HomeView: stay on home so they can pick / upload a book.
-  // If they are already reading something, switch to reader and open the room panel.
   const handleJoinRoom = useCallback(() => {
     if (view === VIEWS.READER) {
-      // Signal to reader to open the room panel
       setOpenRoomPanelOnEnter(true)
     }
-    // If on home, the home view will show the "Room Active" banner — nothing extra needed
+    // On home screen — the RoomBanner and BookRequestPrompt handle everything
   }, [view])
 
   const handleLeaveRoom = useCallback(() => {
@@ -70,8 +82,7 @@ export default function App() {
 
   /**
    * Called when the visitor taps "Upload" in the BookRequestPrompt.
-   * We generate the same deterministic bookId and open the reader immediately,
-   * which will sync page/scroll with the owner via existing PAGE_CHANGE events.
+   * Generates the deterministic bookId (filename + size) and opens the reader.
    */
   const handlePromptUpload = useCallback(async (file) => {
     if (!file || !file.name.toLowerCase().endsWith('.pdf')) return
@@ -82,16 +93,15 @@ export default function App() {
       await storePDF(bookId, arrayBuffer.slice(0))
 
       const book = {
-        id: bookId,
-        title: file.name.replace(/\.pdf$/i, ''),
+        id:       bookId,
+        title:    file.name.replace(/\.pdf$/i, ''),
         filename: file.name,
-        size: file.size,
-        addedAt: Date.now(),
+        size:     file.size,
+        addedAt:  Date.now(),
       }
       addBook(book)
       openBook(bookId)
       clearRequestedBook()
-      // Open reader — room panel stays as-is since we're already in a room
       handleOpenBook(bookId, arrayBuffer, true)
     } catch (e) {
       console.error('Failed to load PDF from prompt:', e)
@@ -131,12 +141,19 @@ export default function App() {
               pdfBuffer={activePDFBuffer}
               onBack={handleBack}
               initialRoomPanelOpen={openRoomPanelOnEnter}
+              sendScroll={sendScroll}
+              sendPageChange={sendPageChange}
+              sendCursor={sendCursor}
+              sendHighlight={sendHighlight}
+              sendChatMessage={sendChatMessage}
+              setChatPanelOpen={setChatPanelOpen}
+              sendBookSet={sendBookSet}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Global book-request prompt — visible on top of any view when visitor
+      {/* Global book-request prompt — visible on any screen when visitor
           receives a BOOK_SET event from the room owner */}
       <BookRequestPrompt onFileSelected={handlePromptUpload} />
     </AppLayout>

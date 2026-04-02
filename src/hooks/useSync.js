@@ -176,9 +176,11 @@ export const useSync = () => {
   }, [currentRoom])
 
   const sendHighlight = useCallback((bookId, highlight) => {
-    if (!currentRoom) return
+    if (!currentRoom || !user) return
+    const role = currentRoom.roles?.[user.clientId] || 'viewer'
+    if (role === 'viewer') return
     syncService.send(SYNC_EVENTS.HIGHLIGHT_ADD, { bookId, highlight })
-  }, [currentRoom])
+  }, [currentRoom, user])
 
   const registerScrollApply = useCallback((fn) => {
     onScrollApply.current = fn

@@ -7,7 +7,6 @@ import { useChatStore } from '../store/chatStore'
 import { loadPDFFromBuffer } from '../services/pdfService'
 import { startAmbientAudio, stopAmbientAudio } from '../services/audioService'
 import { syncService, SYNC_EVENTS } from '../services/syncService'
-import { useSync } from '../hooks/useSync'
 import { usePresence } from '../hooks/usePresence'
 import { useSwipeGesture } from '../hooks/useSwipeGesture'
 import { PDFRenderer } from '../features/reader/PDFRenderer'
@@ -22,7 +21,11 @@ import { ReaderSidebar } from '../components/Layout/Sidebar'
 import { RemoteCursors } from '../features/rooms/UserPresence'
 import { Spinner } from '../components/UI/Tooltip'
 
-export const ReaderView = ({ bookId, pdfBuffer, onBack, initialRoomPanelOpen = false }) => {
+export const ReaderView = ({
+  bookId, pdfBuffer, onBack, initialRoomPanelOpen = false,
+  sendScroll, sendPageChange, sendCursor, sendHighlight,
+  sendChatMessage, setChatPanelOpen, sendBookSet,
+}) => {
   const {
     pdfDocument, setPdfDocument, setLoadError,
     isLoading, loadError, currentPage, setCurrentPage,
@@ -44,7 +47,12 @@ export const ReaderView = ({ bookId, pdfBuffer, onBack, initialRoomPanelOpen = f
   const book = getCurrentBook()
   const inRoom = !!currentRoom
 
-  const { sendScroll, sendPageChange, sendCursor, sendChatMessage, setChatPanelOpen, sendBookSet } = useSync()
+  // Role-based interaction gate:
+  // Only owner and reader can scroll, navigate, and create highlights.
+  // Viewers passively follow — they cannot drive the reading position.
+  const myRole = inRoom ? (currentRoom.roles?.[user?.clientId] || 'viewer') : 'owner'
+  const canInteract = !inRoom || myRole === 'owner' || myRole === 'reader'
+
   const { getUnread } = useChatStore()
   const unreadChat = inRoom && currentRoom ? getUnread(currentRoom.roomId) : 0
   usePresence(sendCursor)
@@ -128,32 +136,32 @@ export const ReaderView = ({ bookId, pdfBuffer, onBack, initialRoomPanelOpen = f
     return unsub
   }, [inRoom, preferences.syncLocked])
 
-  // Navigation helpers
+  // Navigation helpers — viewers cannot drive navigation
   const goToPrevPage = useCallback(() => {
-    if (!containerRef.current) return
+    if (!canInteract || !containerRef.current) return
     setCurrentPage(Math.max(0, currentPage - 1))
     containerRef.current.scrollBy({ top: -containerRef.current.clientHeight * 0.85, behavior: 'smooth' })
-  }, [currentPage, setCurrentPage])
+  }, [canInteract, currentPage, setCurrentPage])
 
   const goToNextPage = useCallback(() => {
-    if (!containerRef.current) return
+    if (!canInteract || !containerRef.current) return
     const max = (pdfDocument?.numPages ?? 1) - 1
     setCurrentPage(Math.min(max, currentPage + 1))
     containerRef.current.scrollBy({ top: containerRef.current.clientHeight * 0.85, behavior: 'smooth' })
-  }, [currentPage, setCurrentPage, pdfDocument])
+  }, [canInteract, currentPage, setCurrentPage, pdfDocument])
 
   const goToPage = useCallback((page) => {
+    if (!canInteract) return
     setCurrentPage(page)
-    // Rough scroll to the right page (each page ~viewport height)
     if (containerRef.current) {
       const approxPageHeight = containerRef.current.scrollHeight / (pdfDocument?.numPages || 1)
       containerRef.current.scrollTo({ top: page * approxPageHeight, behavior: 'smooth' })
     }
-  }, [setCurrentPage, pdfDocument])
+  }, [canInteract, setCurrentPage, pdfDocument])
 
-  // Swipe gestures — only active in scroll mode (book view has its own)
+  // Swipe gestures — only active in scroll mode AND for interacting roles
   const isScrollMode = preferences.readingMode !== 'book'
-  useSwipeGesture(isScrollMode ? containerRef : { current: null }, {
+  useSwipeGesture(isScrollMode && canInteract ? containerRef : { current: null }, {
     onSwipeLeft:  goToNextPage,
     onSwipeRight: goToPrevPage,
   })
@@ -234,8 +242,20 @@ export const ReaderView = ({ bookId, pdfBuffer, onBack, initialRoomPanelOpen = f
       <div className="flex flex-1 min-h-0 relative">
         <main className="flex-1 relative overflow-hidden">
           {preferences.readingMode === 'book'
-            ? <BookView onPageChange={(p) => { if (inRoom && preferences.syncLocked) sendPageChange(p) }} />
-            : <PDFRenderer onScroll={handleScroll} readingContainerRef={containerRef} />
+            ? <BookView
+                canInteract={canInteract}
+                onSyncHighlight={sendHighlight}
+                onPageChange={(p) => {
+                  if (!canInteract) return
+                  if (inRoom && preferences.syncLocked) sendPageChange(p)
+                }}
+              />
+            : <PDFRenderer
+                onScroll={handleScroll}
+                readingContainerRef={containerRef}
+                canInteract={canInteract}
+                onSyncHighlight={sendHighlight}
+              />
           }
         </main>
 

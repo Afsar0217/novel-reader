@@ -9,7 +9,7 @@ import { Spinner } from '../../components/UI/Tooltip'
 import { useSwipeGesture } from '../../hooks/useSwipeGesture'
 
 /* ── Single full-screen page ── */
-const BookPage = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight }) => {
+const BookPage = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight, canInteract = true }) => {
   const { canvasRef, dimensions, textLayer, isRendered, error } = usePDFPage(
     pdfDoc, pageIndex, scale, true
   )
@@ -39,7 +39,8 @@ const BookPage = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlig
           pageIndex={pageIndex}
           highlights={highlights}
           bookId={bookId}
-          onHighlight={onHighlight}
+          onHighlight={canInteract ? onHighlight : null}
+          canInteract={canInteract}
           dimensions={dimensions}
         />
       )}
@@ -51,7 +52,7 @@ BookPage.displayName = 'BookPage'
 /* ════════════════════════════════════════════
    BOOK / SWIPE VIEW  — one page, fills screen
 ════════════════════════════════════════════ */
-export const BookView = ({ onPageChange }) => {
+export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) => {
   const { pdfDocument, currentPage, totalPages, setCurrentPage, currentBookId } = useReaderStore()
   const { addHighlight, getHighlightsForPage } = useAnnotationStore()
 
@@ -107,25 +108,27 @@ export const BookView = ({ onPageChange }) => {
     return Math.max(0.25, Math.min(availW / naturalSize.width, availH / naturalSize.height) * 0.99)
   }, [containerSize, naturalSize])
 
-  /* ── Navigation ── */
+  /* ── Navigation — viewers cannot drive ── */
   const goNext = useCallback(() => {
+    if (!canInteract) return
     const next = Math.min(totalPages - 1, currentPage + 1)
     if (next === currentPage) return
     setDirection(1)
     setCurrentPage(next)
     onPageChange?.(next)
-  }, [currentPage, totalPages, setCurrentPage, onPageChange])
+  }, [canInteract, currentPage, totalPages, setCurrentPage, onPageChange])
 
   const goPrev = useCallback(() => {
+    if (!canInteract) return
     const prev = Math.max(0, currentPage - 1)
     if (prev === currentPage) return
     setDirection(-1)
     setCurrentPage(prev)
     onPageChange?.(prev)
-  }, [currentPage, setCurrentPage, onPageChange])
+  }, [canInteract, currentPage, setCurrentPage, onPageChange])
 
-  /* ── Swipe on the page ── */
-  useSwipeGesture(spreadRef, { onSwipeLeft: goNext, onSwipeRight: goPrev })
+  /* ── Swipe — only for interacting roles ── */
+  useSwipeGesture(canInteract ? spreadRef : { current: null }, { onSwipeLeft: goNext, onSwipeRight: goPrev })
 
   /* ── Keyboard ── */
   useEffect(() => {
@@ -139,8 +142,10 @@ export const BookView = ({ onPageChange }) => {
   }, [goNext, goPrev])
 
   const handleHighlight = useCallback((hl) => {
-    if (currentBookId) addHighlight(currentBookId, hl)
-  }, [currentBookId, addHighlight])
+    if (!canInteract || !currentBookId) return
+    addHighlight(currentBookId, hl)
+    onSyncHighlight?.(currentBookId, hl)
+  }, [canInteract, currentBookId, addHighlight, onSyncHighlight])
 
   /* ── Animation variants ── */
   const variants = {
@@ -165,18 +170,20 @@ export const BookView = ({ onPageChange }) => {
 
       {ready && bookScale && (
         <>
-          {/* ── Prev button ── */}
-          <button
-            onClick={goPrev}
-            disabled={currentPage === 0}
-            aria-label="Previous page"
-            className={`absolute left-1 sm:left-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
-              rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
-              transition-all select-none
-              ${currentPage === 0 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
-          >
-            <ChevronLeft size={20} className="text-[var(--text-primary)]" />
-          </button>
+          {/* ── Prev button — hidden for viewers ── */}
+          {canInteract && (
+            <button
+              onClick={goPrev}
+              disabled={currentPage === 0}
+              aria-label="Previous page"
+              className={`absolute left-1 sm:left-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
+                rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
+                transition-all select-none
+                ${currentPage === 0 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
+            >
+              <ChevronLeft size={20} className="text-[var(--text-primary)]" />
+            </button>
+          )}
 
           {/* ── Page ── */}
           <AnimatePresence custom={direction} mode="wait">
@@ -202,29 +209,42 @@ export const BookView = ({ onPageChange }) => {
                 scale={bookScale}
                 highlights={getHighlightsForPage(currentBookId, currentPage)}
                 bookId={currentBookId}
-                onHighlight={handleHighlight}
+                onHighlight={canInteract ? handleHighlight : null}
+                canInteract={canInteract}
               />
             </motion.div>
           </AnimatePresence>
 
-          {/* ── Next button ── */}
-          <button
-            onClick={goNext}
-            disabled={currentPage >= totalPages - 1}
-            aria-label="Next page"
-            className={`absolute right-1 sm:right-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
-              rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
-              transition-all select-none
-              ${currentPage >= totalPages - 1 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
-          >
-            <ChevronRight size={20} className="text-[var(--text-primary)]" />
-          </button>
+          {/* ── Next button — hidden for viewers ── */}
+          {canInteract && (
+            <button
+              onClick={goNext}
+              disabled={currentPage >= totalPages - 1}
+              aria-label="Next page"
+              className={`absolute right-1 sm:right-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
+                rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
+                transition-all select-none
+                ${currentPage >= totalPages - 1 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
+            >
+              <ChevronRight size={20} className="text-[var(--text-primary)]" />
+            </button>
+          )}
 
           {/* ── Page indicator ── */}
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none
             bg-black/50 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-full">
             {currentPage + 1} / {totalPages}
           </div>
+
+          {/* ── View-only badge for viewers ── */}
+          {!canInteract && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 backdrop-blur-sm text-white text-[11px] font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                View only
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

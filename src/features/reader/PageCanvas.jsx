@@ -4,7 +4,7 @@ import { usePDFPage, useIntersectionObserver } from '../../hooks/usePDFRenderer'
 import { TextLayer } from './TextLayer'
 import { Spinner } from '../../components/UI/Tooltip'
 
-const PageCanvas = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight, isVisible }) => {
+const PageCanvas = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight, isVisible, canInteract = true }) => {
   const { canvasRef, dimensions, textLayer, isRendered, error } = usePDFPage(
     pdfDoc, pageIndex, scale, isVisible
   )
@@ -46,6 +46,7 @@ const PageCanvas = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighl
           highlights={highlights}
           bookId={bookId}
           onHighlight={onHighlight}
+          canInteract={canInteract}
           dimensions={dimensions}
         />
       )}
@@ -55,7 +56,7 @@ const PageCanvas = memo(({ pdfDoc, pageIndex, scale, highlights, bookId, onHighl
 
 PageCanvas.displayName = 'PageCanvas'
 
-export const VirtualPage = ({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight, onVisible, estimatedHeight }) => {
+export const VirtualPage = ({ pdfDoc, pageIndex, scale, highlights, bookId, onHighlight, onVisible, estimatedHeight, canInteract = true }) => {
   const [isVisible, setIsVisible] = useState(false)
   const wrapperRef = useRef(null)
 
@@ -89,6 +90,7 @@ export const VirtualPage = ({ pdfDoc, pageIndex, scale, highlights, bookId, onHi
           bookId={bookId}
           onHighlight={onHighlight}
           isVisible={isVisible}
+          canInteract={canInteract}
         />
       ) : (
         <div
