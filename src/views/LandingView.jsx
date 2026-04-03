@@ -91,8 +91,7 @@ export const LandingView = ({ onRoomReady }) => {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to create room')
 
-      // Connect socket and join
-      socketService.connect()
+      // joinRoom() handles connection automatically
       const joined = await socketService.joinRoom(roomId, user)
       setRoom(joined.room)
       onRoomReady(joined.room)
@@ -115,7 +114,6 @@ export const LandingView = ({ onRoomReady }) => {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Room not found')
 
-      socketService.connect()
       const joined = await socketService.joinRoom(code, user)
       setRoom(joined.room)
       onRoomReady(joined.room)

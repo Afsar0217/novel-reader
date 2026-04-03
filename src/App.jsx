@@ -59,7 +59,6 @@ export default function App() {
       const data = await res.json()
       if (!res.ok) { clearSavedRoom(); setReconnecting(false); return }
 
-      socketService.connect()
       const joined = await socketService.joinRoom(roomId, user)
       setRoom(joined.room)
 
