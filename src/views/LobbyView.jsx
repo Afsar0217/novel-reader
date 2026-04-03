@@ -18,6 +18,7 @@ import { useUserStore }   from '../store/userStore'
 import { useReaderStore } from '../store/readerStore'
 import { socketService }  from '../services/socketService'
 import { storePDF }       from '../services/storageService'
+import { cachePDFBuffer } from '../services/storageService'
 import { generateBookId } from '../utils/idGenerator'
 import { getUserInitials } from '../utils/colorUtils'
 
@@ -151,6 +152,8 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
         id: bookId, title: file.name.replace(/\.pdf$/i, ''),
         filename: file.name, size: file.size, addedAt: Date.now(),
       }
+      // Cache in memory first (instant) — IndexedDB is a reliable backup
+      cachePDFBuffer(bookId, buffer.slice(0))
       await storePDF(bookId, buffer)
       addBook({ ...bookData, arrayBuffer: buffer })
       socketService.setBook({ bookId, title: bookData.title, filename: file.name, size: file.size })
@@ -177,6 +180,8 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
         id: bookId, title: file.name.replace(/\.pdf$/i, ''),
         filename: file.name, size: file.size, addedAt: Date.now(),
       }
+      // Cache in memory first (instant) — IndexedDB is a reliable backup
+      cachePDFBuffer(bookId, buffer.slice(0))
       await storePDF(bookId, buffer)
       addBook({ ...bookData, arrayBuffer: buffer })
       socketService.confirmBook()
@@ -202,6 +207,8 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
         id: bookId, title: file.name.replace(/\.pdf$/i, ''),
         filename: file.name, size: file.size, addedAt: Date.now(),
       }
+      // Cache in memory first (instant) — IndexedDB is a reliable backup
+      cachePDFBuffer(bookId, buffer.slice(0))
       await storePDF(bookId, buffer)
       addBook({ ...bookData, arrayBuffer: buffer })
       setUploadState('confirmed')

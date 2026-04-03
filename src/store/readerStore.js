@@ -33,9 +33,8 @@ export const useReaderStore = create(
       },
 
       openBook: (bookId) => {
-        const book = get().books[bookId]
-        if (!book) return
-        const progress = get().readingProgress[bookId] || {}
+        // Proceed even if the book isn't pre-registered — it'll be added during/after loading
+        const progress = (get().readingProgress[bookId]) || {}
         set({
           currentBookId: bookId,
           currentPage: progress.page || 0,

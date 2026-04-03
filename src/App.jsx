@@ -16,7 +16,7 @@ import { useRoomStore }    from './store/roomStore'
 import { useReaderStore }  from './store/readerStore'
 import { useSync }         from './hooks/useSync'
 import { socketService }   from './services/socketService'
-import { retrievePDF }     from './services/storageService'
+import { retrievePDF, getCachedPDFBuffer } from './services/storageService'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'
 const VIEWS = { LANDING: 'landing', LOBBY: 'lobby', READER: 'reader' }
@@ -122,7 +122,9 @@ export default function App() {
       if (joined.room.status === 'reading') {
         const book = joined.room.book
         if (book?.bookId) {
-          const buffer = await retrievePDF(book.bookId).catch(() => null)
+          // Try memory cache first, then IndexedDB
+          const buffer = getCachedPDFBuffer(book.bookId)
+                      || await retrievePDF(book.bookId).catch(() => null)
           if (buffer) {
             setActiveBookId(book.bookId)
             setActivePDFBuffer(buffer)
@@ -132,7 +134,7 @@ export default function App() {
             return
           }
         }
-        // PDF not in IndexedDB → go to lobby for re-upload (late joiner flow)
+        // PDF not found locally → go to lobby for re-upload (late joiner flow)
         setView(VIEWS.LOBBY)
       } else {
         setView(VIEWS.LOBBY)
@@ -154,13 +156,25 @@ export default function App() {
   /* ── Called by LobbyView when reading starts ─────────────────── */
   const handleReadingStart = useCallback(async (data) => {
     const book = data.book || currentRoom?.book
-    if (!book) return
-
-    const buffer = await retrievePDF(book.bookId).catch(() => null)
-    if (!buffer) {
-      console.warn('PDF not found in local storage')
+    if (!book?.bookId) {
+      console.warn('[handleReadingStart] No book info in event data')
       return
     }
+
+    // Try memory cache first (fastest, always fresh this session)
+    let buffer = getCachedPDFBuffer(book.bookId)
+
+    // Fall back to IndexedDB if memory cache is empty (e.g. after page refresh)
+    if (!buffer) {
+      buffer = await retrievePDF(book.bookId).catch(() => null)
+    }
+
+    if (!buffer) {
+      console.warn('[handleReadingStart] PDF buffer not found — reader cannot open.')
+      // Keep showing the lobby so the user can re-upload or retry
+      return
+    }
+
     openBook(book.bookId)
     setActiveBookId(book.bookId)
     setActivePDFBuffer(buffer)

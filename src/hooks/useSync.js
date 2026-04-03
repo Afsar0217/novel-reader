@@ -28,8 +28,10 @@ export const useSync = () => {
     if (!currentRoom || !user) return
 
     const unsubs = [
-      socketService.on('room:participants', ({ participants: p }) => {
-        setParticipants(p ?? [])
+      // Server emits the participants array directly (not wrapped in an object)
+      socketService.on('room:participants', (data) => {
+        const p = Array.isArray(data) ? data : (data?.participants ?? [])
+        setParticipants(p)
       }),
 
       socketService.on('room:deleted', () => {
