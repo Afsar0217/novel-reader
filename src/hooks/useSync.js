@@ -11,7 +11,7 @@ import { useAnnotationStore } from '../store/annotationStore'
 import { useUserStore }   from '../store/userStore'
 import { useChatStore }   from '../store/chatStore'
 
-export const useSync = () => {
+export const useSync = (onRoomDeleted) => {
   const {
     currentRoom, setParticipants, patchRoom, applyRoleUpdate, leaveRoom,
   } = useRoomStore()
@@ -37,6 +37,7 @@ export const useSync = () => {
       socketService.on('room:deleted', () => {
         leaveRoom()
         socketService.disconnect()
+        onRoomDeleted?.()
       }),
 
       socketService.on('sync:page', ({ page }) => {

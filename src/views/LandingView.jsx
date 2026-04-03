@@ -7,7 +7,7 @@ import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Users, Plus, LogIn, BookOpen, Heart, Wifi, ArrowRight, Loader2 } from 'lucide-react'
 import { useUserStore } from '../store/userStore'
-import { useRoomStore }  from '../store/roomStore'
+
 import { socketService } from '../services/socketService'
 import { generateRoomId } from '../utils/idGenerator'
 import { getUserInitials } from '../utils/colorUtils'
@@ -61,8 +61,6 @@ const FloatingBooks = () => (
 ════════════════════════════════════════════════════════════════════ */
 export const LandingView = ({ onRoomReady }) => {
   const { user, preferences, setTheme, updateUsername } = useUserStore()
-  const { setRoom } = useRoomStore()
-
   const [mode,       setMode]       = useState('home')  // 'home' | 'create' | 'join'
   const [joinCode,   setJoinCode]   = useState('')
   const [loading,    setLoading]    = useState(false)
@@ -93,14 +91,13 @@ export const LandingView = ({ onRoomReady }) => {
 
       // joinRoom() handles connection automatically
       const joined = await socketService.joinRoom(roomId, user)
-      setRoom(joined.room)
       onRoomReady(joined.room)
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
-  }, [user, setRoom, onRoomReady])
+  }, [user, onRoomReady])
 
   /* ── Join room ───────────────────────────────────────────────── */
   const handleJoin = useCallback(async () => {
@@ -115,14 +112,13 @@ export const LandingView = ({ onRoomReady }) => {
       if (!res.ok) throw new Error(data.error || 'Room not found')
 
       const joined = await socketService.joinRoom(code, user)
-      setRoom(joined.room)
       onRoomReady(joined.room)
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
-  }, [user, joinCode, setRoom, onRoomReady])
+  }, [user, joinCode, onRoomReady])
 
   const saveName = () => {
     if (nameInput.trim()) updateUsername(nameInput.trim())

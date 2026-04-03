@@ -51,6 +51,9 @@ export const ReaderView = ({
     : true   // solo reading — full control
   const canInteract = isController
 
+  // Declared early — used in useEffect dependency arrays below
+  const isScrollMode = preferences.readingMode !== 'book'
+
   const { getUnread } = useChatStore()
   const unreadChat = inRoom && currentRoom ? getUnread(currentRoom.roomId) : 0
 
@@ -126,7 +129,7 @@ export const ReaderView = ({
   useEffect(() => {
     if (!inRoom || !pdfDocument || !canInteract) return
     if (preferences.syncLocked) sendPageChange(currentPage)
-  }, [currentPage, pdfDocument])
+  }, [currentPage, pdfDocument, inRoom, canInteract, preferences.syncLocked, sendPageChange])
 
   /* ── Navigation helpers ──────────────────────────────────────── */
   const goToPrevPage = useCallback(() => {
@@ -152,7 +155,6 @@ export const ReaderView = ({
   }, [canInteract, setCurrentPage, pdfDocument])
 
   /* ── Swipe gesture ───────────────────────────────────────────── */
-  const isScrollMode = preferences.readingMode !== 'book'
   useSwipeGesture(isScrollMode && canInteract ? containerRef : { current: null }, {
     onSwipeLeft:  goToNextPage,
     onSwipeRight: goToPrevPage,

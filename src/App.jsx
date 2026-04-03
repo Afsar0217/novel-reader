@@ -66,7 +66,13 @@ export default function App() {
   } = useRoomStore()
   const { openBook } = useReaderStore()
 
-  const { sendScroll, sendPageChange, sendCursor, sendHighlight, sendChatMessage, setChatPanelOpen } = useSync()
+  const handleRoomDeleted = useCallback(() => {
+    setActivePDFBuffer(null)
+    setActiveBookId(null)
+    setView(VIEWS.LANDING)
+  }, [])
+
+  const { sendScroll, sendPageChange, sendCursor, sendHighlight, sendChatMessage, setChatPanelOpen } = useSync(handleRoomDeleted)
 
   /* ── Bootstrap ──────────────────────────────────────────────── */
   useEffect(() => {
