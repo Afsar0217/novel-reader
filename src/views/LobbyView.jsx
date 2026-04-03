@@ -1,33 +1,25 @@
 /**
- * LobbyView — Waiting room shown after creating / joining.
+ * LobbyView — Waiting room + late-joiner flow.
  *
- * Owner flow:
- *   1. See participants
- *   2. Click "Select PDF to Start" → file picker
- *   3. Upload stored locally → book:set sent to server
- *   4. Wait for all to confirm (or force-start)
- *   5. Transition to reader once book:start received
- *
- * Viewer flow:
- *   1. See participants
- *   2. "Waiting for owner to select a book..."
- *   3. book:requested received → confirmation dialog appears
- *   4. Upload same PDF → book:confirm sent → wait for book:start
+ * Cases handled:
+ *   A) Owner: waiting → selects PDF → everyone confirms → reading starts
+ *   B) Viewer (on-time): waits for owner → uploads same PDF → confirms → reading starts
+ *   C) Late joiner: room already reading → uploads same PDF → goes to reader directly
+ *   D) Reconnect: PDF in IndexedDB → App.jsx sends them straight to READER
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Copy, Check, Users, Crown, BookOpen, Upload,
-  Loader2, LogOut, Play, Eye, RefreshCw, CheckCircle2, Clock,
+  Loader2, LogOut, Play, Eye, CheckCircle2, Clock, UserPlus,
 } from 'lucide-react'
-import { useRoomStore }  from '../store/roomStore'
-import { useUserStore }  from '../store/userStore'
+import { useRoomStore }   from '../store/roomStore'
+import { useUserStore }   from '../store/userStore'
 import { useReaderStore } from '../store/readerStore'
-import { socketService } from '../services/socketService'
-import { storePDF }      from '../services/storageService'
-import { loadPDFFromBuffer } from '../services/pdfService'
-import { generateBookId }    from '../utils/idGenerator'
-import { getUserInitials }   from '../utils/colorUtils'
+import { socketService }  from '../services/socketService'
+import { storePDF }       from '../services/storageService'
+import { generateBookId } from '../utils/idGenerator'
+import { getUserInitials } from '../utils/colorUtils'
 
 /* ── Participant card ────────────────────────────────────────────── */
 const ParticipantCard = ({ participant, isMe, isOwner, isController }) => (
@@ -71,32 +63,37 @@ const ParticipantCard = ({ participant, isMe, isOwner, isController }) => (
    LOBBY VIEW
 ════════════════════════════════════════════════════════════════════ */
 export const LobbyView = ({ onReadingStart, onLeave }) => {
-  const { currentRoom, setBook, setConfirmStatus, setReading, setParticipants, patchRoom } = useRoomStore()
-  const { user }       = useUserStore()
-  const { addBook }    = useReaderStore()
+  const { currentRoom, setBook, setConfirmStatus, setReading, setParticipants } = useRoomStore()
+  const { user }    = useUserStore()
+  const { addBook } = useReaderStore()
 
   const [copied,       setCopied]       = useState(false)
-  const [uploadState,  setUploadState]  = useState('idle')   // idle | uploading | waiting | confirmed
-  const [confirmStats, setConfirmStats] = useState(null)     // { confirmed, total, details }
-  const [bookInfo,     setBookInfo]     = useState(null)     // { bookId, title, filename, size } from server
-  const [localBuffer,  setLocalBuffer]  = useState(null)     // ArrayBuffer for viewer upload
+  const [uploadState,  setUploadState]  = useState('idle')   // idle|uploading|waiting|confirmed
+  const [confirmStats, setConfirmStats] = useState(null)
+  const [bookInfo,     setBookInfo]     = useState(null)
   const [error,        setError]        = useState('')
+  /** true when the user joins a room that's already reading */
+  const [lateJoiner,   setLateJoiner]   = useState(false)
 
-  const fileInputRef   = useRef(null)
-  const isOwner        = currentRoom?.ownerId === user?.clientId
-  const isController   = currentRoom?.activeControllerId === user?.clientId
-  const amIController  = isOwner || isController  // simplified: owner is always controller at start
+  const fileInputRef  = useRef(null)
+  const isOwner       = currentRoom?.ownerId === user?.clientId
+  const isController  = currentRoom?.activeControllerId === user?.clientId
+  const amIController = isOwner || isController
 
-  /* ── Listen for book:requested ────────────────────────────────── */
+  /* ── Socket listeners ────────────────────────────────────────── */
   useEffect(() => {
     if (!currentRoom) return
 
     const unsubs = [
       socketService.on('book:requested', ({ book }) => {
         setBookInfo(book)
-        setBook(book)   // update store
-        // Controller already confirmed; viewer needs to upload
-        if (currentRoom.activeControllerId !== user?.clientId) {
+        setBook(book)
+
+        if (currentRoom.status === 'reading') {
+          // Late joiner: room already in progress, they need to upload
+          setLateJoiner(true)
+          setUploadState('idle')
+        } else if (currentRoom.activeControllerId !== user?.clientId) {
           setUploadState('idle')
         }
       }),
@@ -115,30 +112,35 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
         setParticipants(participants)
       }),
 
-      socketService.on('room:deleted', () => {
-        onLeave()
-      }),
+      socketService.on('room:deleted', () => { onLeave() }),
     ]
 
-    // Sync current book if room already has one (reconnect)
+    // ── Initial state sync (room had book before we mounted) ──
     if (currentRoom.book) {
       setBookInfo(currentRoom.book)
+
       if (currentRoom.status === 'confirming') {
-        setUploadState(isOwner || isController ? 'confirmed' : 'idle')
+        // Was in confirming when we joined/reconnected
+        setUploadState(amIController ? 'confirmed' : 'idle')
+
+      } else if (currentRoom.status === 'reading' && !amIController) {
+        // Joined a room that's already reading → late joiner
+        setLateJoiner(true)
+        setUploadState('idle')
       }
     }
 
     return () => unsubs.forEach(u => u())
   }, [currentRoom?.roomId, user?.clientId])
 
-  /* ── Copy room code ───────────────────────────────────────────── */
+  /* ── Handlers ────────────────────────────────────────────────── */
   const handleCopy = () => {
     navigator.clipboard.writeText(currentRoom.roomId).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 1800)
     })
   }
 
-  /* ── Owner: select PDF ────────────────────────────────────────── */
+  /** Owner: pick PDF → send book:set to server */
   const handleOwnerFileSelect = useCallback(async (file) => {
     if (!file || !file.type.includes('pdf')) { setError('Please select a PDF file'); return }
     setUploadState('uploading'); setError('')
@@ -146,67 +148,73 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
       const buffer = await file.arrayBuffer()
       const bookId = generateBookId(file.name, file.size)
       const bookData = {
-        id:       bookId,
-        title:    file.name.replace(/\.pdf$/i, ''),
-        filename: file.name,
-        size:     file.size,
-        addedAt:  Date.now(),
+        id: bookId, title: file.name.replace(/\.pdf$/i, ''),
+        filename: file.name, size: file.size, addedAt: Date.now(),
       }
-      // Store locally
       await storePDF(bookId, buffer)
       addBook({ ...bookData, arrayBuffer: buffer })
-      setLocalBuffer(buffer)
-
-      // Tell server which book was chosen
       socketService.setBook({ bookId, title: bookData.title, filename: file.name, size: file.size })
       setBookInfo({ bookId, title: bookData.title, filename: file.name, size: file.size })
       setUploadState('waiting')
     } catch (e) {
-      setError(e.message || 'Failed to process PDF')
-      setUploadState('idle')
+      setError(e.message || 'Failed to process PDF'); setUploadState('idle')
     }
   }, [addBook])
 
-  /* ── Viewer: upload same PDF ──────────────────────────────────── */
+  /** Viewer (on-time): upload + confirm via server */
   const handleViewerFileSelect = useCallback(async (file) => {
     if (!file || !file.type.includes('pdf')) { setError('Please select a PDF file'); return }
     if (!bookInfo) return
     setUploadState('uploading'); setError('')
     try {
-      const buffer  = await file.arrayBuffer()
-      const bookId  = generateBookId(file.name, file.size)
-
+      const buffer = await file.arrayBuffer()
+      const bookId = generateBookId(file.name, file.size)
       if (bookId !== bookInfo.bookId) {
-        setError(`This doesn't match the owner's PDF (${bookInfo.filename}). Please upload the same file.`)
-        setUploadState('idle')
-        return
+        setError(`Doesn't match. Please upload "${bookInfo.filename}"`)
+        setUploadState('idle'); return
       }
       const bookData = {
-        id:       bookId,
-        title:    file.name.replace(/\.pdf$/i, ''),
-        filename: file.name,
-        size:     file.size,
-        addedAt:  Date.now(),
+        id: bookId, title: file.name.replace(/\.pdf$/i, ''),
+        filename: file.name, size: file.size, addedAt: Date.now(),
       }
       await storePDF(bookId, buffer)
       addBook({ ...bookData, arrayBuffer: buffer })
-      setLocalBuffer(buffer)
       socketService.confirmBook()
       setUploadState('confirmed')
     } catch (e) {
-      setError(e.message || 'Upload failed')
-      setUploadState('idle')
+      setError(e.message || 'Upload failed'); setUploadState('idle')
     }
   }, [bookInfo, addBook])
 
-  /* ── Force start (owner) ──────────────────────────────────────── */
+  /** Late joiner: upload → go straight to reader (no server coordination) */
+  const handleLateJoinerFileSelect = useCallback(async (file) => {
+    if (!file || !file.type.includes('pdf')) { setError('Please select a PDF file'); return }
+    if (!bookInfo) return
+    setUploadState('uploading'); setError('')
+    try {
+      const buffer = await file.arrayBuffer()
+      const bookId = generateBookId(file.name, file.size)
+      if (bookId !== bookInfo.bookId) {
+        setError(`Doesn't match. Please upload "${bookInfo.filename}" (${(bookInfo.size / 1024 / 1024).toFixed(1)} MB)`)
+        setUploadState('idle'); return
+      }
+      const bookData = {
+        id: bookId, title: file.name.replace(/\.pdf$/i, ''),
+        filename: file.name, size: file.size, addedAt: Date.now(),
+      }
+      await storePDF(bookId, buffer)
+      addBook({ ...bookData, arrayBuffer: buffer })
+      setUploadState('confirmed')
+      // Navigate directly — room is already reading, no server ack needed
+      onReadingStart({ book: bookInfo })
+    } catch (e) {
+      setError(e.message || 'Upload failed'); setUploadState('idle')
+    }
+  }, [bookInfo, addBook, onReadingStart])
+
   const handleForceStart = () => { socketService.forceStart() }
 
-  /* ── Leave room ───────────────────────────────────────────────── */
-  const handleLeave = () => {
-    socketService.leaveRoom()
-    onLeave()
-  }
+  const handleLeave = () => { socketService.leaveRoom(); onLeave() }
 
   if (!currentRoom || !user) return null
 
@@ -230,7 +238,7 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
           </button>
         </div>
 
-        {/* ── Room code card ── */}
+        {/* ── Room code ── */}
         <motion.div initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}
           className="bg-[var(--surface-1)] border border-[var(--border)] rounded-3xl p-5 mb-4">
           <p className="text-xs text-[var(--text-muted)] mb-2 font-semibold uppercase tracking-widest">Room Code</p>
@@ -276,7 +284,7 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
         {/* ── Action panel ── */}
         <AnimatePresence mode="wait">
 
-          {/* ─ Status: waiting (before any book selected) ─ */}
+          {/* ─ Waiting: before any book selected ─ */}
           {currentRoom.status === 'waiting' && (
             <motion.div key="waiting-panel" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }}
               className="bg-[var(--surface-1)] border border-[var(--border)] rounded-3xl p-5 space-y-4">
@@ -284,7 +292,7 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                 <>
                   <div className="text-center space-y-1">
                     <p className="font-semibold text-[var(--text-primary)]">You're the owner</p>
-                    <p className="text-sm text-[var(--text-muted)]">Select a PDF to start the session. Your partner will be asked to upload the same file.</p>
+                    <p className="text-sm text-[var(--text-muted)]">Select a PDF to start. Your partner will be asked to upload the same file.</p>
                   </div>
                   {error && <p className="text-sm text-red-500 text-center">{error}</p>}
                   <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" className="hidden"
@@ -302,13 +310,13 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                     <Clock size={22} className="text-[var(--text-muted)]" />
                   </div>
                   <p className="font-semibold text-[var(--text-primary)]">Waiting for owner</p>
-                  <p className="text-sm text-[var(--text-muted)] text-center">The room owner will select a PDF to begin the reading session.</p>
+                  <p className="text-sm text-[var(--text-muted)] text-center">The room owner will select a PDF to begin.</p>
                 </div>
               )}
             </motion.div>
           )}
 
-          {/* ─ Status: confirming ─ */}
+          {/* ─ Confirming: participants uploading ─ */}
           {currentRoom.status === 'confirming' && bookInfo && (
             <motion.div key="confirming-panel" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }}
               className="bg-[var(--surface-1)] border border-[var(--border)] rounded-3xl p-5 space-y-4">
@@ -324,7 +332,7 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                 </div>
               </div>
 
-              {/* Confirmation progress */}
+              {/* Progress */}
               {confirmStats && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
@@ -332,12 +340,13 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                     <span className="font-semibold text-[var(--text-primary)]">{confirmStats.confirmed}/{confirmStats.total}</span>
                   </div>
                   <div className="h-2 bg-[var(--surface-3)] rounded-full overflow-hidden">
-                    <motion.div animate={{ width: `${(confirmStats.confirmed / Math.max(confirmStats.total,1)) * 100}%` }}
+                    <motion.div
+                      animate={{ width: `${(confirmStats.confirmed / Math.max(confirmStats.total,1)) * 100}%` }}
                       className="h-full bg-emerald-400 rounded-full" transition={{ type:'spring', stiffness:120 }} />
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {participants.map(p => (
-                      <div key={p.clientId} className="flex items-center gap-1.5 text-xs">
+                      <div key={p.clientId} className="flex items-center gap-1 text-xs">
                         <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
                           style={{ backgroundColor: p.avatarColor }}>
                           {getUserInitials(p.username)}
@@ -351,15 +360,13 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                 </div>
               )}
 
-              {/* Viewer: upload their copy */}
+              {/* Viewer upload */}
               {!amIController && uploadState !== 'confirmed' && (
                 <>
                   {error && <p className="text-sm text-red-500 text-center">{error}</p>}
-                  <div className="text-center space-y-1 mb-1">
+                  <div className="text-center space-y-0.5">
                     <p className="text-sm font-semibold text-[var(--text-primary)]">Upload your copy to join</p>
-                    <p className="text-xs text-[var(--text-muted)]">
-                      Upload the same file: <strong>{bookInfo.filename}</strong>
-                    </p>
+                    <p className="text-xs text-[var(--text-muted)]">Upload the same file: <strong>{bookInfo.filename}</strong></p>
                   </div>
                   <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" className="hidden"
                     onChange={e => e.target.files?.[0] && handleViewerFileSelect(e.target.files[0])} />
@@ -371,8 +378,6 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                   </button>
                 </>
               )}
-
-              {/* Viewer: waiting after confirm */}
               {!amIController && uploadState === 'confirmed' && (
                 <div className="flex items-center gap-2 justify-center py-1">
                   <CheckCircle2 size={16} className="text-emerald-500" />
@@ -380,7 +385,7 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
                 </div>
               )}
 
-              {/* Owner: waiting + force-start */}
+              {/* Owner: waiting + force start */}
               {amIController && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 justify-center">
@@ -396,18 +401,57 @@ export const LobbyView = ({ onReadingStart, onLeave }) => {
             </motion.div>
           )}
 
-          {/* ─ Status: reading (everyone confirmed, transitioning) ─ */}
+          {/* ─ Reading: room active ─ */}
           {currentRoom.status === 'reading' && (
-            <motion.div key="reading-panel" initial={{ opacity:0, scale:0.95 }} animate={{ opacity:1, scale:1 }} exit={{ opacity:0 }}
-              className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-3xl p-5 flex flex-col items-center gap-3">
-              <CheckCircle2 size={36} className="text-emerald-500" />
-              <p className="font-semibold text-emerald-700 dark:text-emerald-300">All set! Opening the book…</p>
-              <Loader2 size={18} className="animate-spin text-emerald-500" />
-            </motion.div>
+            lateJoiner && uploadState !== 'confirmed' && bookInfo ? (
+              /* Late joiner: upload to enter the session */
+              <motion.div key="late-join-panel" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }}
+                className="bg-[var(--surface-1)] border border-[var(--border)] rounded-3xl p-5 space-y-4">
+
+                <div className="flex items-center gap-2 px-3 py-2 bg-accent/8 border border-accent/20 rounded-2xl">
+                  <UserPlus size={15} className="text-accent flex-shrink-0" />
+                  <p className="text-xs text-accent font-semibold">Session in progress — upload to join</p>
+                </div>
+
+                <div className="flex gap-3 p-3 bg-[var(--surface-2)] rounded-2xl">
+                  <div className="w-12 h-14 bg-accent rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <BookOpen size={18} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-[var(--text-primary)] truncate">{bookInfo.title}</p>
+                    <p className="text-xs text-[var(--text-muted)] truncate">{bookInfo.filename}</p>
+                    <p className="text-xs text-[var(--text-muted)]">{(bookInfo.size / 1024 / 1024).toFixed(1)} MB</p>
+                  </div>
+                </div>
+
+                {error && <p className="text-sm text-red-500 text-center bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-xl">{error}</p>}
+
+                <div className="text-center space-y-0.5">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">Upload the same PDF to join</p>
+                  <p className="text-xs text-[var(--text-muted)]">Your reading will sync automatically once uploaded.</p>
+                </div>
+
+                <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" className="hidden"
+                  onChange={e => e.target.files?.[0] && handleLateJoinerFileSelect(e.target.files[0])} />
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploadState === 'uploading'}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-accent text-white rounded-2xl font-semibold hover:bg-accent/90 disabled:opacity-60 transition-all">
+                  {uploadState === 'uploading'
+                    ? <><Loader2 size={16} className="animate-spin" /> Verifying…</>
+                    : <><Upload size={16} /> Upload & Join Session</>}
+                </button>
+              </motion.div>
+            ) : (
+              /* Normal: all confirmed, transitioning to reader */
+              <motion.div key="reading-panel" initial={{ opacity:0, scale:0.95 }} animate={{ opacity:1, scale:1 }} exit={{ opacity:0 }}
+                className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-3xl p-5 flex flex-col items-center gap-3">
+                <CheckCircle2 size={36} className="text-emerald-500" />
+                <p className="font-semibold text-emerald-700 dark:text-emerald-300">All set! Opening the book…</p>
+                <Loader2 size={18} className="animate-spin text-emerald-500" />
+              </motion.div>
+            )
           )}
 
         </AnimatePresence>
-
       </div>
     </div>
   )
