@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useReaderStore } from '../../store/readerStore'
 import { useAnnotationStore } from '../../store/annotationStore'
+import { useUserStore } from '../../store/userStore'
 import { usePDFPage } from '../../hooks/usePDFRenderer'
 import { TextLayer } from './TextLayer'
 import { Spinner } from '../../components/UI/Tooltip'
@@ -55,6 +56,7 @@ BookPage.displayName = 'BookPage'
 export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) => {
   const { pdfDocument, currentPage, totalPages, setCurrentPage, currentBookId } = useReaderStore()
   const { addHighlight, getHighlightsForPage } = useAnnotationStore()
+  const { preferences } = useUserStore()
 
   const containerRef = useRef(null)
   const spreadRef    = useRef(null)
@@ -95,6 +97,8 @@ export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) 
 
   const ready = containerSize !== null && naturalSize !== null
 
+  const zoom = preferences.zoomLevel || 1
+
   /* ── Compute scale so the page fills the container ── */
   const bookScale = useMemo(() => {
     if (!containerSize || !naturalSize) return null
@@ -109,8 +113,9 @@ export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) 
     const availH = containerSize.height - PAD_V
 
     if (availW <= 0 || availH <= 0) return 0.5
-    return Math.max(0.25, Math.min(availW / naturalSize.width, availH / naturalSize.height) * 0.99)
-  }, [containerSize, naturalSize])
+    const base = Math.max(0.25, Math.min(availW / naturalSize.width, availH / naturalSize.height) * 0.99)
+    return Math.max(0.25, Math.min(4, base * zoom))
+  }, [containerSize, naturalSize, zoom])
 
   /* ── Navigation — viewers cannot drive ── */
   const goNext = useCallback(() => {

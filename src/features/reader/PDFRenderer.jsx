@@ -110,12 +110,12 @@ export const PDFRenderer = ({ onScroll, readingContainerRef, canInteract = true,
     setCurrentPage(pageIndex)
   }, [setCurrentPage])
 
-  // Responsive scale: fit pages to the container width, then apply user font-size preference
+  // Responsive scale: fit pages to the container width, then apply zoom preference
   const PADDING = 32  // px-4 on both sides = 32px total
-  const userFontScale = (preferences.fontSize || 16) / 16
+  const zoom = preferences.zoomLevel || 1
   const availW = containerWidth > 0 ? containerWidth - PADDING : 760
   const autoScale = availW / NATURAL_PDF_WIDTH
-  const scale = Math.max(0.4, Math.min(2.5, autoScale * userFontScale))
+  const scale = Math.max(0.3, Math.min(4, autoScale * zoom))
 
   if (!pdfDocument) {
     return (

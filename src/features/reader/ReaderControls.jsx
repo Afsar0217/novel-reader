@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, Search, Sliders, BookMarked,
   Users, Hash, WifiOff, X, Sun, Sunset, Moon,
   MessageCircle, Bookmark, BookmarkCheck,
-  AlignJustify, BookOpen, MoreHorizontal,
+  AlignJustify, BookOpen, MoreHorizontal, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import { useReaderStore } from '../../store/readerStore'
 import { useUserStore } from '../../store/userStore'
@@ -58,7 +58,7 @@ export const ReaderTopBar = ({
   inRoom, title, sidebarOpen, roomPanelOpen, roomChatOpen, bookmarksOpen, unreadChat,
 }) => {
   const { currentPage, totalPages, setCurrentPage } = useReaderStore()
-  const { preferences, setTheme, toggleRuler, toggleFocusBlur, toggleAmbient, toggleSyncLocked, updatePreference } = useUserStore()
+  const { preferences, setTheme, toggleRuler, toggleFocusBlur, toggleAmbient, toggleSyncLocked, updatePreference, zoomIn, zoomOut, resetZoom } = useUserStore()
   const { currentRoom } = useRoomStore()
   const [showSettings, setShowSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
@@ -142,6 +142,14 @@ export const ReaderTopBar = ({
 
           {/* ── Always visible ── */}
 
+          {/* Zoom controls — always visible */}
+          <ZoomControls
+            zoomLevel={preferences.zoomLevel || 1}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onReset={resetZoom}
+          />
+
           {/* View mode toggle — always visible */}
           <ViewModeToggle />
 
@@ -211,6 +219,18 @@ export const ReaderTopBar = ({
                     <MobileMenuBtn icon={<Search size={14} />} label="Search" onClick={() => { onOpenSearch(); setShowMoreMenu(false) }} />
                     <MobileMenuBtn icon={<Bookmark size={14} />} label="Bookmarks" onClick={() => { onToggleBookmarks(); setShowMoreMenu(false) }} />
                     <MobileMenuBtn icon={<BookMarked size={14} />} label="Highlights" onClick={() => { onToggleSidebar(); setShowMoreMenu(false) }} />
+                    <div className="flex items-center gap-1 px-3 py-1.5">
+                      <span className="text-xs text-[var(--text-muted)] flex-1">Zoom</span>
+                      <button onClick={zoomOut} className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-30" disabled={(preferences.zoomLevel || 1) <= 0.5}>
+                        <ZoomOut size={13} />
+                      </button>
+                      <button onClick={resetZoom} className="min-w-[3rem] text-center text-xs font-mono font-semibold text-[var(--text-primary)] hover:text-accent transition-colors">
+                        {Math.round((preferences.zoomLevel || 1) * 100)}%
+                      </button>
+                      <button onClick={zoomIn} className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-30" disabled={(preferences.zoomLevel || 1) >= 3}>
+                        <ZoomIn size={13} />
+                      </button>
+                    </div>
                     {inRoom && (
                       <MobileMenuBtn
                         icon={<WifiOff size={14} />}
@@ -295,6 +315,39 @@ export const ReaderTopBar = ({
     </>
   )
 }
+
+const ZoomControls = ({ zoomLevel, onZoomIn, onZoomOut, onReset }) => (
+  <div className="flex items-center bg-[var(--surface-2)] rounded-xl p-0.5 border border-[var(--border)] gap-0.5">
+    <Tooltip content="Zoom out">
+      <button
+        onClick={onZoomOut}
+        disabled={zoomLevel <= 0.5}
+        className="flex items-center justify-center w-6 h-6 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-0)] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        <ZoomOut size={11} />
+      </button>
+    </Tooltip>
+
+    <Tooltip content="Reset zoom (100%)">
+      <button
+        onClick={onReset}
+        className="min-w-[2.6rem] h-6 px-1 rounded-lg text-[10px] font-mono font-semibold text-[var(--text-primary)] hover:text-accent hover:bg-[var(--surface-0)] transition-all tabular-nums"
+      >
+        {Math.round(zoomLevel * 100)}%
+      </button>
+    </Tooltip>
+
+    <Tooltip content="Zoom in">
+      <button
+        onClick={onZoomIn}
+        disabled={zoomLevel >= 3}
+        className="flex items-center justify-center w-6 h-6 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-0)] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        <ZoomIn size={11} />
+      </button>
+    </Tooltip>
+  </div>
+)
 
 const ViewModeToggle = () => {
   const { preferences, updatePreference } = useUserStore()

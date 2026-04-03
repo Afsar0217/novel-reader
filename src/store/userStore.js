@@ -21,6 +21,7 @@ export const useUserStore = create(
         fontSize: 16,
         lineHeight: 1.7,
         readingMode: 'scroll',
+        zoomLevel: 1,
         rulerEnabled: false,
         focusBlur: false,
         ambientEnabled: false,
@@ -67,6 +68,27 @@ export const useUserStore = create(
       toggleSyncLocked: () =>
         set(state => ({
           preferences: { ...state.preferences, syncLocked: !state.preferences.syncLocked },
+        })),
+
+      zoomIn: () =>
+        set(state => ({
+          preferences: {
+            ...state.preferences,
+            zoomLevel: Math.min(3, Math.round((state.preferences.zoomLevel || 1) * 10 + 2.5) / 10),
+          },
+        })),
+
+      zoomOut: () =>
+        set(state => ({
+          preferences: {
+            ...state.preferences,
+            zoomLevel: Math.max(0.5, Math.round((state.preferences.zoomLevel || 1) * 10 - 2.5) / 10),
+          },
+        })),
+
+      resetZoom: () =>
+        set(state => ({
+          preferences: { ...state.preferences, zoomLevel: 1 },
         })),
     }),
     {
