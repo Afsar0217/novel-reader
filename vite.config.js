@@ -10,15 +10,13 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['pdfjs-dist'],
+    exclude: ['pdfjs-dist'],
   },
   build: {
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('pdfjs-dist'))   return 'pdfjs'
           if (id.includes('framer-motion')) return 'framer'
-          if (id.includes('mqtt'))          return 'mqtt'
           if (id.includes('node_modules')) return 'vendor'
         },
       },
