@@ -1,29 +1,44 @@
-import { useState, useCallback, useEffect } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
-import { AppLayout } from './components/Layout/AppLayout'
-import { HomeView } from './views/HomeView'
-import { ReaderView } from './views/ReaderView'
-import { BookRequestPrompt } from './features/rooms/BookRequestPrompt'
+/**
+ * App.jsx — root component, manages the three main views:
+ *
+ *   LANDING  →  LOBBY  →  READER
+ *
+ * Persistence: if the user was in a room before refreshing, we attempt
+ * to reconnect to that room (savedRoomId from localStorage).
+ */
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { AnimatePresence, motion }  from 'framer-motion'
+import { AppLayout }    from './components/Layout/AppLayout'
+import { LandingView }  from './views/LandingView'
+import { LobbyView }    from './views/LobbyView'
+import { ReaderView }   from './views/ReaderView'
 import { useUserStore } from './store/userStore'
 import { useRoomStore } from './store/roomStore'
-import { useSync } from './hooks/useSync'
-import { syncService } from './services/syncService'
-import { storePDF } from './services/storageService'
-import { generateBookId } from './utils/idGenerator'
 import { useReaderStore } from './store/readerStore'
+import { useSync }      from './hooks/useSync'
+import { socketService } from './services/socketService'
+import { retrievePDF }   from './services/storageService'
 
-const VIEWS = { HOME: 'home', READER: 'reader' }
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'
+const VIEWS = { LANDING: 'landing', LOBBY: 'lobby', READER: 'reader' }
 
 export default function App() {
-  const [view, setView] = useState(VIEWS.HOME)
+  const [view,          setView]          = useState(VIEWS.LANDING)
   const [activePDFBuffer, setActivePDFBuffer] = useState(null)
-  const [activeBookId, setActiveBookId] = useState(null)
-  const [openRoomPanelOnEnter, setOpenRoomPanelOnEnter] = useState(false)
+  const [activeBookId,  setActiveBookId]  = useState(null)
+  const [reconnecting,  setReconnecting]  = useState(false)
 
   const { user, preferences, initUser } = useUserStore()
-  const { currentRoom, leaveRoom, clearRequestedBook } = useRoomStore()
-  const { addBook, openBook } = useReaderStore()
+  const {
+    currentRoom, savedRoomId, setRoom, setParticipants, setReading,
+    leaveRoom, clearSavedRoom, patchRoom,
+  } = useRoomStore()
+  const { openBook } = useReaderStore()
 
+  /* ── Sync hook — always active while in a room ──────────────── */
+  const { sendScroll, sendPageChange, sendCursor, sendHighlight, sendChatMessage, setChatPanelOpen } = useSync()
+
+  /* ── Bootstrap ──────────────────────────────────────────────── */
   useEffect(() => {
     initUser()
     if (preferences?.theme) {
@@ -31,131 +46,143 @@ export default function App() {
     }
   }, [])
 
-  // ── useSync lives here so it's active the instant you join a room,
-  //    even before any PDF is open (fixes cross-device participant list
-  //    and BOOK_SET delivery to visitors on the home screen).
-  const {
-    sendScroll,
-    sendPageChange,
-    sendCursor,
-    sendHighlight,
-    sendChatMessage,
-    setChatPanelOpen,
-    sendBookSet,
-  } = useSync()
-
-  // Re-init the MQTT/BroadcastChannel transport whenever the active room changes
-  // (also covers app-reload where room is restored from localStorage).
+  /* ── Attempt rejoin on page refresh ────────────────────────── */
   useEffect(() => {
-    if (currentRoom && user) {
-      syncService.destroy()
-      syncService.init(currentRoom.roomId, user.clientId)
+    if (!savedRoomId || !user) return
+    attemptRejoin(savedRoomId)
+  }, [user?.clientId])  // run once user is loaded
+
+  const attemptRejoin = useCallback(async (roomId) => {
+    setReconnecting(true)
+    try {
+      const res  = await fetch(`${BACKEND_URL}/rooms/${roomId}`)
+      const data = await res.json()
+      if (!res.ok) { clearSavedRoom(); setReconnecting(false); return }
+
+      socketService.connect()
+      const joined = await socketService.joinRoom(roomId, user)
+      setRoom(joined.room)
+
+      // Decide where to navigate
+      if (joined.room.status === 'reading') {
+        // Try to load their local copy of the PDF
+        const book = joined.room.book
+        if (book?.bookId) {
+          const buffer = await retrievePDF(book.bookId).catch(() => null)
+          if (buffer) {
+            setActiveBookId(book.bookId)
+            setActivePDFBuffer(buffer)
+            openBook(book.bookId)
+            setView(VIEWS.READER)
+            setReconnecting(false)
+            return
+          }
+        }
+        // Buffer not found locally → go to lobby so they can re-upload
+        setView(VIEWS.LOBBY)
+      } else {
+        setView(VIEWS.LOBBY)
+      }
+    } catch {
+      clearSavedRoom()
+    } finally {
+      setReconnecting(false)
     }
-  }, [currentRoom?.roomId, user?.clientId])
+  }, [user, clearSavedRoom, setRoom, openBook])
 
-  const handleOpenBook = useCallback((bookId, buffer, openRoomPanel = false) => {
-    setActiveBookId(bookId)
+  /* ── Called by LandingView after create/join ─────────────────── */
+  const handleRoomReady = useCallback((room) => {
+    setRoom(room)
+    setView(VIEWS.LOBBY)
+  }, [setRoom])
+
+  /* ── Called by LobbyView when book:start fires ───────────────── */
+  const handleReadingStart = useCallback(async (data) => {
+    const book = data.book || currentRoom?.book
+    if (!book) return
+
+    // Owner already has the buffer in state; viewers stored it during confirm
+    const buffer = await retrievePDF(book.bookId).catch(() => null)
+    if (!buffer) {
+      console.warn('PDF not found in local storage')
+      return
+    }
+    openBook(book.bookId)
+    setActiveBookId(book.bookId)
     setActivePDFBuffer(buffer)
-    setOpenRoomPanelOnEnter(openRoomPanel)
+    setReading(data)
     setView(VIEWS.READER)
-  }, [])
+  }, [currentRoom, openBook, setReading])
 
-  const handleBack = useCallback(() => {
-    setView(VIEWS.HOME)
+  /* ── Leave / back from reader ────────────────────────────────── */
+  const handleLeaveRoom = useCallback(() => {
+    socketService.leaveRoom()
+    socketService.disconnect()
+    leaveRoom()
+    setView(VIEWS.LANDING)
     setActivePDFBuffer(null)
     setActiveBookId(null)
-    setOpenRoomPanelOnEnter(false)
-  }, [])
-
-  const handleJoinRoom = useCallback(() => {
-    if (view === VIEWS.READER) {
-      setOpenRoomPanelOnEnter(true)
-    }
-    // On home screen — the RoomBanner and BookRequestPrompt handle everything
-  }, [view])
-
-  const handleLeaveRoom = useCallback(() => {
-    syncService.send('user_leave', {})
-    syncService.destroy()
-    leaveRoom()
   }, [leaveRoom])
 
-  /**
-   * Called when the visitor taps "Upload" in the BookRequestPrompt.
-   * Generates the deterministic bookId (filename + size) and opens the reader.
-   */
-  const handlePromptUpload = useCallback(async (file) => {
-    if (!file || !file.name.toLowerCase().endsWith('.pdf')) return
+  const handleBackToLobby = useCallback(() => {
+    setView(VIEWS.LOBBY)
+    setActivePDFBuffer(null)
+    setActiveBookId(null)
+  }, [])
 
-    try {
-      const bookId = generateBookId(file.name, file.size)
-      const arrayBuffer = await file.arrayBuffer()
-      await storePDF(bookId, arrayBuffer.slice(0))
-
-      const book = {
-        id:       bookId,
-        title:    file.name.replace(/\.pdf$/i, ''),
-        filename: file.name,
-        size:     file.size,
-        addedAt:  Date.now(),
-      }
-      addBook(book)
-      openBook(bookId)
-      clearRequestedBook()
-      handleOpenBook(bookId, arrayBuffer, true)
-    } catch (e) {
-      console.error('Failed to load PDF from prompt:', e)
-    }
-  }, [addBook, openBook, clearRequestedBook, handleOpenBook])
+  /* ── Reconnecting spinner ────────────────────────────────────── */
+  if (reconnecting) {
+    return (
+      <div className="min-h-screen bg-[var(--surface-0)] flex flex-col items-center justify-center gap-4">
+        <div className="w-10 h-10 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+        <p className="text-sm text-[var(--text-muted)]">Rejoining your room…</p>
+      </div>
+    )
+  }
 
   return (
     <AppLayout>
       <AnimatePresence mode="wait">
-        {view === VIEWS.HOME && (
-          <motion.div
-            key="home"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <HomeView
-              onOpenBook={handleOpenBook}
-              onJoinRoom={handleJoinRoom}
-              onLeaveRoom={handleLeaveRoom}
+
+        {view === VIEWS.LANDING && (
+          <motion.div key="landing"
+            initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            transition={{ duration:0.2 }}>
+            <LandingView onRoomReady={handleRoomReady} />
+          </motion.div>
+        )}
+
+        {view === VIEWS.LOBBY && (
+          <motion.div key="lobby"
+            initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            transition={{ duration:0.2 }}>
+            <LobbyView
+              onReadingStart={handleReadingStart}
+              onLeave={handleLeaveRoom}
             />
           </motion.div>
         )}
 
-        {view === VIEWS.READER && (
-          <motion.div
-            key="reader"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="h-screen"
-          >
+        {view === VIEWS.READER && activeBookId && activePDFBuffer && (
+          <motion.div key="reader"
+            initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            transition={{ duration:0.2 }}
+            className="h-screen">
             <ReaderView
               bookId={activeBookId}
               pdfBuffer={activePDFBuffer}
-              onBack={handleBack}
-              initialRoomPanelOpen={openRoomPanelOnEnter}
+              onBack={handleBackToLobby}
               sendScroll={sendScroll}
               sendPageChange={sendPageChange}
               sendCursor={sendCursor}
               sendHighlight={sendHighlight}
               sendChatMessage={sendChatMessage}
               setChatPanelOpen={setChatPanelOpen}
-              sendBookSet={sendBookSet}
             />
           </motion.div>
         )}
-      </AnimatePresence>
 
-      {/* Global book-request prompt — visible on any screen when visitor
-          receives a BOOK_SET event from the room owner */}
-      <BookRequestPrompt onFileSelected={handlePromptUpload} />
+      </AnimatePresence>
     </AppLayout>
   )
 }

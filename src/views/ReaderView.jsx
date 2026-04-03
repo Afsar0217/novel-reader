@@ -1,30 +1,29 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useReaderStore } from '../store/readerStore'
-import { useUserStore } from '../store/userStore'
-import { useRoomStore } from '../store/roomStore'
-import { useChatStore } from '../store/chatStore'
+import { useReaderStore }  from '../store/readerStore'
+import { useUserStore }    from '../store/userStore'
+import { useRoomStore }    from '../store/roomStore'
+import { useChatStore }    from '../store/chatStore'
 import { loadPDFFromBuffer } from '../services/pdfService'
 import { startAmbientAudio, stopAmbientAudio } from '../services/audioService'
-import { syncService, SYNC_EVENTS } from '../services/syncService'
-import { usePresence } from '../hooks/usePresence'
+import { socketService }   from '../services/socketService'
+import { usePresence }     from '../hooks/usePresence'
 import { useSwipeGesture } from '../hooks/useSwipeGesture'
-import { PDFRenderer } from '../features/reader/PDFRenderer'
-import { BookView } from '../features/reader/BookView'
+import { PDFRenderer }     from '../features/reader/PDFRenderer'
+import { BookView }        from '../features/reader/BookView'
 import { ReaderTopBar, ReaderBottomBar } from '../features/reader/ReaderControls'
-import { SearchPanel } from '../features/reader/SearchPanel'
-import { BookmarkPanel } from '../features/reader/BookmarkPanel'
-import { RoomPanel } from '../features/rooms/RoomPanel'
-import { RoomChat } from '../features/rooms/RoomChat'
-import { RoomManager } from '../features/rooms/RoomManager'
-import { ReaderSidebar } from '../components/Layout/Sidebar'
-import { RemoteCursors } from '../features/rooms/UserPresence'
-import { Spinner } from '../components/UI/Tooltip'
+import { SearchPanel }     from '../features/reader/SearchPanel'
+import { BookmarkPanel }   from '../features/reader/BookmarkPanel'
+import { RoomPanel }       from '../features/rooms/RoomPanel'
+import { RoomChat }        from '../features/rooms/RoomChat'
+import { ReaderSidebar }   from '../components/Layout/Sidebar'
+import { RemoteCursors }   from '../features/rooms/UserPresence'
+import { Spinner }         from '../components/UI/Tooltip'
 
 export const ReaderView = ({
-  bookId, pdfBuffer, onBack, initialRoomPanelOpen = false,
+  bookId, pdfBuffer, onBack,
   sendScroll, sendPageChange, sendCursor, sendHighlight,
-  sendChatMessage, setChatPanelOpen, sendBookSet,
+  sendChatMessage, setChatPanelOpen,
 }) => {
   const {
     pdfDocument, setPdfDocument, setLoadError,
@@ -35,38 +34,32 @@ export const ReaderView = ({
   const { preferences, toggleSyncLocked, toggleAmbient, user } = useUserStore()
   const { currentRoom } = useRoomStore()
 
-  const [showSearch,      setShowSearch]      = useState(false)
-  const [showSidebar,     setShowSidebar]     = useState(false)
-  const [showRoomPanel,   setShowRoomPanel]   = useState(false)
-  const [showRoomChat,    setShowRoomChat]    = useState(false)
-  const [showBookmarks,   setShowBookmarks]   = useState(false)
-  const [showRoomManager, setShowRoomManager] = useState(false)
-  const [showSwipeHint,   setShowSwipeHint]   = useState(false)
+  const [showSearch,    setShowSearch]    = useState(false)
+  const [showSidebar,   setShowSidebar]   = useState(false)
+  const [showRoomPanel, setShowRoomPanel] = useState(false)
+  const [showRoomChat,  setShowRoomChat]  = useState(false)
+  const [showBookmarks, setShowBookmarks] = useState(false)
+  const [showSwipeHint, setShowSwipeHint] = useState(false)
 
   const containerRef = useRef(null)
-  const book = getCurrentBook()
+  const book  = getCurrentBook()
   const inRoom = !!currentRoom
 
-  // Role-based interaction gate:
-  // Only owner and reader can scroll, navigate, and create highlights.
-  // Viewers passively follow — they cannot drive the reading position.
-  const myRole = inRoom ? (currentRoom.roles?.[user?.clientId] || 'viewer') : 'owner'
-  const canInteract = !inRoom || myRole === 'owner' || myRole === 'reader'
+  /* ── Role: only the active controller can drive reading ──────── */
+  const isController = inRoom
+    ? currentRoom.activeControllerId === user?.clientId
+    : true   // solo reading — full control
+  const canInteract = isController
 
   const { getUnread } = useChatStore()
   const unreadChat = inRoom && currentRoom ? getUnread(currentRoom.roomId) : 0
+
   usePresence(sendCursor)
 
-  // Auto-open room panel on first entry into a room
-  useEffect(() => {
-    if (initialRoomPanelOpen && currentRoom) setShowRoomPanel(true)
-  }, [initialRoomPanelOpen, currentRoom])
-
-  // Show swipe hint on mobile (only once)
+  /* ── Swipe hint (mobile, once per session) ───────────────────── */
   useEffect(() => {
     const isMobile = window.matchMedia('(max-width:640px)').matches
-    const shown = sessionStorage.getItem('swipeHintShown')
-    if (isMobile && !shown) {
+    if (isMobile && !sessionStorage.getItem('swipeHintShown')) {
       const t = setTimeout(() => {
         setShowSwipeHint(true)
         setTimeout(() => setShowSwipeHint(false), 3000)
@@ -76,67 +69,48 @@ export const ReaderView = ({
     }
   }, [])
 
-  // Load the PDF
+  /* ── Load PDF ────────────────────────────────────────────────── */
   useEffect(() => {
     if (!pdfBuffer || !bookId) return
     let cancelled = false
-
     loadPDFFromBuffer(pdfBuffer, bookId)
       .then(doc => {
-        if (!cancelled) {
-          setPdfDocument(doc)
-          setTotalPages(doc.numPages)
-        }
+        if (!cancelled) { setPdfDocument(doc); setTotalPages(doc.numPages) }
       })
-      .catch(e => {
-        if (!cancelled) setLoadError(e?.message || 'Failed to load PDF')
-      })
-
+      .catch(e => { if (!cancelled) setLoadError(e?.message || 'Failed to load PDF') })
     return () => { cancelled = true }
   }, [pdfBuffer, bookId])
 
-  // When PDF finishes loading and we're in a room as owner/reader,
-  // broadcast the book metadata so visitors get the "upload to sync" prompt.
-  useEffect(() => {
-    if (!pdfDocument || !inRoom || !book) return
-    const myRole = currentRoom?.roles?.[user?.clientId]
-    if (myRole === 'owner' || myRole === 'reader') {
-      sendBookSet(bookId, book.title, book.filename, book.size || 0)
-    }
-  // Only fire once when pdfDocument first becomes available
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDocument])
-
-  // Ambient audio
+  /* ── Ambient audio ───────────────────────────────────────────── */
   useEffect(() => {
     if (preferences.ambientEnabled) startAmbientAudio()
     else stopAmbientAudio()
     return () => stopAmbientAudio()
   }, [preferences.ambientEnabled])
 
-  // Scroll handler
-  const handleScroll = useCallback((scrollPos) => {
-    setScrollPosition(scrollPos)
-    if (inRoom && preferences.syncLocked) sendScroll(scrollPos)
-  }, [inRoom, preferences.syncLocked, sendScroll, setScrollPosition])
-
-  // Broadcast page changes when in a room
-  useEffect(() => {
-    if (!inRoom || !pdfDocument) return
-    if (preferences.syncLocked) sendPageChange(currentPage)
-  }, [currentPage, pdfDocument])
-
-  // Receive scroll from peers
+  /* ── Receive scroll from socketService ──────────────────────── */
   useEffect(() => {
     if (!inRoom) return
-    const unsub = syncService.on(SYNC_EVENTS.SCROLL, event => {
+    const unsub = socketService.on('sync:scroll', ({ scrollPosition }) => {
       if (!preferences.syncLocked) return
-      containerRef.current?.scrollTo({ top: event.scrollPosition, behavior: 'smooth' })
+      containerRef.current?.scrollTo({ top: scrollPosition, behavior: 'smooth' })
     })
     return unsub
   }, [inRoom, preferences.syncLocked])
 
-  // Navigation helpers — viewers cannot drive navigation
+  /* ── Scroll handler ──────────────────────────────────────────── */
+  const handleScroll = useCallback((scrollPos) => {
+    setScrollPosition(scrollPos)
+    if (inRoom && canInteract && preferences.syncLocked) sendScroll(scrollPos)
+  }, [inRoom, canInteract, preferences.syncLocked, sendScroll, setScrollPosition])
+
+  /* ── Broadcast page changes ──────────────────────────────────── */
+  useEffect(() => {
+    if (!inRoom || !pdfDocument || !canInteract) return
+    if (preferences.syncLocked) sendPageChange(currentPage)
+  }, [currentPage, pdfDocument])
+
+  /* ── Navigation helpers ──────────────────────────────────────── */
   const goToPrevPage = useCallback(() => {
     if (!canInteract || !containerRef.current) return
     setCurrentPage(Math.max(0, currentPage - 1))
@@ -154,19 +128,19 @@ export const ReaderView = ({
     if (!canInteract) return
     setCurrentPage(page)
     if (containerRef.current) {
-      const approxPageHeight = containerRef.current.scrollHeight / (pdfDocument?.numPages || 1)
-      containerRef.current.scrollTo({ top: page * approxPageHeight, behavior: 'smooth' })
+      const h = containerRef.current.scrollHeight / (pdfDocument?.numPages || 1)
+      containerRef.current.scrollTo({ top: page * h, behavior: 'smooth' })
     }
   }, [canInteract, setCurrentPage, pdfDocument])
 
-  // Swipe gestures — only active in scroll mode AND for interacting roles
+  /* ── Swipe gesture ───────────────────────────────────────────── */
   const isScrollMode = preferences.readingMode !== 'book'
   useSwipeGesture(isScrollMode && canInteract ? containerRef : { current: null }, {
     onSwipeLeft:  goToNextPage,
     onSwipeRight: goToPrevPage,
   })
 
-  // Keyboard shortcuts
+  /* ── Keyboard shortcuts ──────────────────────────────────────── */
   useEffect(() => {
     const onKey = (e) => {
       if (['INPUT','TEXTAREA'].includes(e.target.tagName)) return
@@ -179,31 +153,26 @@ export const ReaderView = ({
     return () => window.removeEventListener('keydown', onKey)
   }, [goToNextPage, goToPrevPage])
 
-  /* ── Loading state ── */
+  /* ── Loading state ───────────────────────────────────────────── */
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[var(--surface-0)] gap-4">
         <Spinner size={36} />
         <p className="text-sm text-[var(--text-muted)] animate-pulse">Loading document…</p>
-        <p className="text-xs text-[var(--text-muted)] opacity-60">
-          Large PDFs may take a moment
-        </p>
       </div>
     )
   }
 
-  /* ── Error state ── */
+  /* ── Error state ─────────────────────────────────────────────── */
   if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[var(--surface-0)] gap-4 px-6 text-center">
         <div className="text-5xl">⚠️</div>
         <p className="text-base font-semibold text-[var(--text-primary)]">Failed to load PDF</p>
         <p className="text-sm text-red-500 max-w-xs">{loadError}</p>
-        <button
-          onClick={onBack}
-          className="mt-2 px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors"
-        >
-          ← Back to Library
+        <button onClick={onBack}
+          className="mt-2 px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
+          ← Back
         </button>
       </div>
     )
@@ -222,7 +191,6 @@ export const ReaderView = ({
           onToggleRoomPanel={() => setShowRoomPanel(s => !s)}
           onToggleRoomChat={() => { setShowRoomChat(s => !s); setShowRoomPanel(false) }}
           onToggleBookmarks={() => setShowBookmarks(s => !s)}
-          onToggleRoomManager={() => setShowRoomManager(true)}
           inRoom={inRoom}
           sidebarOpen={showSidebar}
           roomPanelOpen={showRoomPanel}
@@ -231,11 +199,7 @@ export const ReaderView = ({
           unreadChat={unreadChat}
         />
         <SearchPanel open={showSearch} onClose={() => setShowSearch(false)} />
-        <BookmarkPanel
-          open={showBookmarks}
-          onClose={() => setShowBookmarks(false)}
-          onJumpToPage={goToPage}
-        />
+        <BookmarkPanel open={showBookmarks} onClose={() => setShowBookmarks(false)} onJumpToPage={goToPage} />
       </div>
 
       {/* Body */}
@@ -278,7 +242,6 @@ export const ReaderView = ({
       <ReaderBottomBar
         onPrevPage={goToPrevPage}
         onNextPage={goToNextPage}
-        onOpenRoomManager={() => setShowRoomManager(true)}
         onOpenChat={() => { setShowRoomChat(s => !s); setShowRoomPanel(false) }}
         onToggleBookmark={() => {
           if (isPageBookmarked(currentPage)) {
@@ -295,11 +258,11 @@ export const ReaderView = ({
       {/* Remote cursors overlay */}
       {inRoom && <RemoteCursors />}
 
-      {/* Ambient audio dot */}
+      {/* Ambient audio indicator */}
       <AnimatePresence>
         {preferences.ambientEnabled && (
           <motion.div
-            initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+            initial={{ scale:0 }} animate={{ scale:1 }} exit={{ scale:0 }}
             className="fixed bottom-14 right-3 z-20 w-3 h-3 rounded-full bg-purple-400 ambient-indicator cursor-pointer"
             title="Ambient sound — click to stop"
             onClick={toggleAmbient}
@@ -307,26 +270,17 @@ export const ReaderView = ({
         )}
       </AnimatePresence>
 
-      {/* Swipe hint (mobile only) */}
+      {/* Swipe hint */}
       <AnimatePresence>
         {showSwipeHint && (
           <motion.div
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 bg-black/70 text-white text-xs px-4 py-2 rounded-full pointer-events-none"
-          >
+            initial={{ opacity:0, y:4 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }}
+            className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 bg-black/70 text-white text-xs px-4 py-2 rounded-full pointer-events-none">
             👈 Swipe to navigate pages 👉
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Room manager accessible from inside reader */}
-      <RoomManager
-        open={showRoomManager}
-        onClose={() => setShowRoomManager(false)}
-        onRoomJoined={() => { setShowRoomManager(false); setShowRoomPanel(true) }}
-      />
     </div>
   )
 }
