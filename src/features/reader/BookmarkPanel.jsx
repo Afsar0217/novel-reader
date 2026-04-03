@@ -66,7 +66,7 @@ export const BookmarkPanel = ({ open, onClose, onJumpToPage }) => {
           animate={{ opacity: 1, y: 0,  scale: 1 }}
           exit={{ opacity: 0, y: -6, scale: 0.97 }}
           transition={{ duration: 0.18 }}
-          className="absolute right-2 sm:right-4 z-40 bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] w-72"
+          className="absolute right-2 sm:right-4 z-40 bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] w-[min(288px,calc(100vw-16px))]"
           style={{ top: '3.25rem' }}
         >
           {/* Header */}

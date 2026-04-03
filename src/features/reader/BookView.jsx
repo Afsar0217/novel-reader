@@ -98,10 +98,14 @@ export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) 
   /* ── Compute scale so the page fills the container ── */
   const bookScale = useMemo(() => {
     if (!containerSize || !naturalSize) return null
-    const BTN_W = 56   // space reserved for each nav button
-    const PAD_V = 32   // vertical breathing room
+    const isMobile = containerSize.width <= 520
+    // On mobile, nav buttons overlay the page (swipe is primary) — use full width
+    // On desktop, reserve space for side nav buttons
+    const BTN_W = isMobile ? 0 : 56
+    const PAD_H = isMobile ? 16 : 24   // horizontal padding
+    const PAD_V = isMobile ? 56 : 32   // extra bottom space on mobile for page indicator
 
-    const availW = containerSize.width  - BTN_W * 2
+    const availW = containerSize.width  - BTN_W * 2 - PAD_H
     const availH = containerSize.height - PAD_V
 
     if (availW <= 0 || availH <= 0) return 0.5
@@ -170,18 +174,18 @@ export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) 
 
       {ready && bookScale && (
         <>
-          {/* ── Prev button — hidden for viewers ── */}
+          {/* ── Prev button — hidden for viewers; on mobile overlays the page ── */}
           {canInteract && (
             <button
               onClick={goPrev}
               disabled={currentPage === 0}
               aria-label="Previous page"
-              className={`absolute left-1 sm:left-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
+              className={`absolute left-1 sm:left-3 z-20 w-9 h-9 sm:w-12 sm:h-12 flex items-center justify-center
                 rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
                 transition-all select-none
-                ${currentPage === 0 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
+                ${currentPage === 0 ? 'opacity-20 cursor-not-allowed' : 'opacity-50 sm:opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
             >
-              <ChevronLeft size={20} className="text-[var(--text-primary)]" />
+              <ChevronLeft size={18} className="text-[var(--text-primary)]" />
             </button>
           )}
 
@@ -215,18 +219,18 @@ export const BookView = ({ onPageChange, canInteract = true, onSyncHighlight }) 
             </motion.div>
           </AnimatePresence>
 
-          {/* ── Next button — hidden for viewers ── */}
+          {/* ── Next button — hidden for viewers; on mobile overlays the page ── */}
           {canInteract && (
             <button
               onClick={goNext}
               disabled={currentPage >= totalPages - 1}
               aria-label="Next page"
-              className={`absolute right-1 sm:right-3 z-20 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center
+              className={`absolute right-1 sm:right-3 z-20 w-9 h-9 sm:w-12 sm:h-12 flex items-center justify-center
                 rounded-full bg-[var(--surface-0)]/80 backdrop-blur-sm border border-[var(--border)] shadow-md
                 transition-all select-none
-                ${currentPage >= totalPages - 1 ? 'opacity-20 cursor-not-allowed' : 'opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
+                ${currentPage >= totalPages - 1 ? 'opacity-20 cursor-not-allowed' : 'opacity-50 sm:opacity-60 hover:opacity-100 hover:scale-105 active:scale-95'}`}
             >
-              <ChevronRight size={20} className="text-[var(--text-primary)]" />
+              <ChevronRight size={18} className="text-[var(--text-primary)]" />
             </button>
           )}
 

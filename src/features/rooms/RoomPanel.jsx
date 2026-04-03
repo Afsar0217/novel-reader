@@ -74,7 +74,7 @@ export const RoomPanel = ({ open, onClose }) => {
           animate={{ opacity:1, x:0 }}
           exit={{ opacity:0, x:280 }}
           transition={{ type:'spring', damping:26, stiffness:300 }}
-          className="absolute right-0 top-0 bottom-0 w-72 bg-[var(--surface-0)] border-l border-[var(--border)] shadow-[var(--shadow-lg)] z-30 flex flex-col">
+          className="absolute inset-y-0 right-0 w-full sm:w-72 bg-[var(--surface-0)] border-l border-[var(--border)] shadow-[var(--shadow-lg)] z-30 flex flex-col">
 
           {/* Header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">

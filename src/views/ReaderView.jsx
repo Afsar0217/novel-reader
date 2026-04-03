@@ -88,15 +88,33 @@ export const ReaderView = ({
     return () => stopAmbientAudio()
   }, [preferences.ambientEnabled])
 
-  /* ── Receive scroll from socketService ──────────────────────── */
+  /* ── Receive scroll from socketService (scroll mode) ─────────── */
   useEffect(() => {
-    if (!inRoom) return
+    if (!inRoom || canInteract) return   // viewers only
     const unsub = socketService.on('sync:scroll', ({ scrollPosition }) => {
-      if (!preferences.syncLocked) return
+      if (!preferences.syncLocked || !isScrollMode) return
       containerRef.current?.scrollTo({ top: scrollPosition, behavior: 'smooth' })
     })
     return unsub
-  }, [inRoom, preferences.syncLocked])
+  }, [inRoom, canInteract, isScrollMode, preferences.syncLocked])
+
+  /* ── Receive page sync (book mode → also drives scroll mode) ─── */
+  useEffect(() => {
+    if (!inRoom || canInteract) return   // viewers only
+    const unsub = socketService.on('sync:page', ({ page }) => {
+      if (!preferences.syncLocked) return
+      // Book mode: setCurrentPage is already called by useSync.js → BookView re-renders ✓
+      // Scroll mode: physically scroll to the page's approximate position
+      if (isScrollMode && containerRef.current && pdfDocument) {
+        requestAnimationFrame(() => {
+          if (!containerRef.current) return
+          const approxY = (page / pdfDocument.numPages) * containerRef.current.scrollHeight
+          containerRef.current.scrollTo({ top: approxY, behavior: 'smooth' })
+        })
+      }
+    })
+    return unsub
+  }, [inRoom, canInteract, isScrollMode, preferences.syncLocked, pdfDocument])
 
   /* ── Scroll handler ──────────────────────────────────────────── */
   const handleScroll = useCallback((scrollPos) => {

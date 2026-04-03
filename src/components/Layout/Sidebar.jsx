@@ -17,11 +17,11 @@ export const ReaderSidebar = ({ open, onClose }) => {
     <AnimatePresence>
       {open && (
         <motion.aside
-          initial={{ opacity: 0, width: 0 }}
-          animate={{ opacity: 1, width: 288 }}
-          exit={{ opacity: 0, width: 0 }}
-          transition={{ type: 'spring', damping: 25, stiffness: 280 }}
-          className="flex-shrink-0 border-l border-[var(--border)] bg-[var(--surface-0)] overflow-hidden flex flex-col h-full"
+          initial={{ opacity: 0, x: 288 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 288 }}
+          transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+          className="absolute inset-y-0 right-0 w-full sm:w-72 border-l border-[var(--border)] bg-[var(--surface-0)] overflow-hidden flex flex-col z-30"
         >
           <div className="flex items-center border-b border-[var(--border)] px-2">
             {TABS.map(tab => (

@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, Search, Sliders, BookMarked,
   Users, Hash, WifiOff, X, Sun, Sunset, Moon,
   MessageCircle, Bookmark, BookmarkCheck,
-  AlignJustify, BookOpen,
+  AlignJustify, BookOpen, MoreHorizontal,
 } from 'lucide-react'
 import { useReaderStore } from '../../store/readerStore'
 import { useUserStore } from '../../store/userStore'
@@ -18,6 +18,17 @@ const THEMES = [
   { id: 'sepia', icon: <Sunset size={14} />, label: 'Sepia' },
   { id: 'dark',  icon: <Moon size={14} />,   label: 'Dark'  },
 ]
+
+/* ── Mobile menu button row item ── */
+const MobileMenuBtn = ({ icon, label, onClick }) => (
+  <button
+    onClick={onClick}
+    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] transition-colors"
+  >
+    <span className="flex-shrink-0 text-[var(--text-muted)]">{icon}</span>
+    {label}
+  </button>
+)
 
 /* ── Sync pill that lives inside the top bar ── */
 const SyncPill = ({ onClick, syncLocked, onlineCount }) => (
@@ -50,6 +61,7 @@ export const ReaderTopBar = ({
   const { preferences, setTheme, toggleRuler, toggleFocusBlur, toggleAmbient, toggleSyncLocked, updatePreference } = useUserStore()
   const { currentRoom } = useRoomStore()
   const [showSettings, setShowSettings] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [pageInput, setPageInput] = useState('')
 
   const handlePageJump = (e) => {
@@ -60,7 +72,7 @@ export const ReaderTopBar = ({
     }
   }
 
-  const onlineCount = currentRoom?.users?.filter(u => u.isOnline).length ?? 0
+  const onlineCount = currentRoom?.participants?.filter(u => u.isOnline).length ?? 0
 
   return (
     <>
@@ -68,11 +80,11 @@ export const ReaderTopBar = ({
         {/* Back */}
         <button
           onClick={onBack}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] transition-all group flex-shrink-0"
-          title="Back to library"
+          className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] transition-all group flex-shrink-0"
+          title="Back to lobby"
         >
           <ChevronLeft size={17} className="group-hover:-translate-x-0.5 transition-transform" />
-          <span className="hidden sm:inline text-xs">Library</span>
+          <span className="hidden sm:inline text-xs">Back</span>
         </button>
 
         {/* Title */}
@@ -84,57 +96,62 @@ export const ReaderTopBar = ({
 
         {/* Right side controls */}
         <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
-          {/* Sync pill (only when in room) */}
-          {inRoom && (
-            <SyncPill
-              syncLocked={preferences.syncLocked}
-              onlineCount={onlineCount}
-              onClick={toggleSyncLocked}
-            />
-          )}
 
-          {/* Page jump — hidden on very small screens */}
-          <div className="hidden sm:flex items-center gap-1 bg-[var(--surface-2)] rounded-lg px-2 py-1 text-xs text-[var(--text-secondary)] border border-[var(--border)]">
-            <Hash size={10} />
-            <input
-              type="number"
-              placeholder={String(currentPage + 1)}
-              value={pageInput}
-              onChange={e => setPageInput(e.target.value)}
-              onKeyDown={handlePageJump}
-              className="w-9 bg-transparent outline-none text-center text-xs"
-              min={1} max={totalPages}
-            />
-            <span className="text-[var(--text-muted)] text-xs">/ {totalPages}</span>
+          {/* ── Desktop-only items ── */}
+          <div className="hidden sm:flex items-center gap-0.5 sm:gap-1">
+            {/* Sync pill (only when in room) */}
+            {inRoom && (
+              <SyncPill
+                syncLocked={preferences.syncLocked}
+                onlineCount={onlineCount}
+                onClick={toggleSyncLocked}
+              />
+            )}
+
+            {/* Page jump */}
+            <div className="flex items-center gap-1 bg-[var(--surface-2)] rounded-lg px-2 py-1 text-xs text-[var(--text-secondary)] border border-[var(--border)]">
+              <Hash size={10} />
+              <input
+                type="number"
+                placeholder={String(currentPage + 1)}
+                value={pageInput}
+                onChange={e => setPageInput(e.target.value)}
+                onKeyDown={handlePageJump}
+                className="w-9 bg-transparent outline-none text-center text-xs"
+                min={1} max={totalPages}
+              />
+              <span className="text-[var(--text-muted)] text-xs">/ {totalPages}</span>
+            </div>
+
+            <Tooltip content="Search (/)">
+              <IconButton onClick={onOpenSearch} variant="ghost">
+                <Search size={15} />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip content="Bookmarks">
+              <BookmarkTopBtn onClick={onToggleBookmarks} active={bookmarksOpen} />
+            </Tooltip>
+
+            <Tooltip content="Highlights">
+              <IconButton onClick={onToggleSidebar} variant={sidebarOpen ? 'secondary' : 'ghost'}>
+                <BookMarked size={15} />
+              </IconButton>
+            </Tooltip>
           </div>
 
-          {/* View mode toggle */}
+          {/* ── Always visible ── */}
+
+          {/* View mode toggle — always visible */}
           <ViewModeToggle />
 
-          <Tooltip content="Search  (/)">
-            <IconButton onClick={onOpenSearch} variant="ghost">
-              <Search size={15} />
-            </IconButton>
-          </Tooltip>
-
-          {/* Bookmark button */}
-          <Tooltip content="Bookmarks">
-            <BookmarkTopBtn onClick={onToggleBookmarks} active={bookmarksOpen} />
-          </Tooltip>
-
-          <Tooltip content="Highlights">
-            <IconButton onClick={onToggleSidebar} variant={sidebarOpen ? 'secondary' : 'ghost'}>
-              <BookMarked size={15} />
-            </IconButton>
-          </Tooltip>
-
           <Tooltip content="Settings">
-            <IconButton onClick={() => setShowSettings(s => !s)} variant={showSettings ? 'secondary' : 'ghost'}>
+            <IconButton onClick={() => { setShowSettings(s => !s); setShowMoreMenu(false) }} variant={showSettings ? 'secondary' : 'ghost'}>
               <Sliders size={15} />
             </IconButton>
           </Tooltip>
 
-          {/* Room chat button (only when in a room) */}
+          {/* Room chat button — visible on mobile too when in room */}
           {inRoom && (
             <Tooltip content="Room Chat">
               <div className="relative">
@@ -169,6 +186,44 @@ export const ReaderTopBar = ({
               )}
             </button>
           </Tooltip>
+
+          {/* Mobile-only "More" button — opens dropdown with search/bookmarks/highlights */}
+          <div className="relative sm:hidden">
+            <IconButton
+              onClick={() => { setShowMoreMenu(s => !s); setShowSettings(false) }}
+              variant={showMoreMenu ? 'secondary' : 'ghost'}
+            >
+              <MoreHorizontal size={15} />
+            </IconButton>
+
+            <AnimatePresence>
+              {showMoreMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowMoreMenu(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                    transition={{ duration: 0.13 }}
+                    className="absolute right-0 z-40 bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] p-2 w-44 space-y-0.5"
+                    style={{ top: '2.6rem' }}
+                  >
+                    <MobileMenuBtn icon={<Search size={14} />} label="Search" onClick={() => { onOpenSearch(); setShowMoreMenu(false) }} />
+                    <MobileMenuBtn icon={<Bookmark size={14} />} label="Bookmarks" onClick={() => { onToggleBookmarks(); setShowMoreMenu(false) }} />
+                    <MobileMenuBtn icon={<BookMarked size={14} />} label="Highlights" onClick={() => { onToggleSidebar(); setShowMoreMenu(false) }} />
+                    {inRoom && (
+                      <MobileMenuBtn
+                        icon={<WifiOff size={14} />}
+                        label={preferences.syncLocked ? 'Free mode' : 'Lock sync'}
+                        onClick={() => { toggleSyncLocked(); setShowMoreMenu(false) }}
+                      />
+                    )}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+
         </div>
       </header>
 
@@ -182,7 +237,7 @@ export const ReaderTopBar = ({
               animate={{ opacity: 1, y: 0,  scale: 1 }}
               exit={{   opacity: 0, y: -6, scale: 0.97 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-2 sm:right-4 z-40 bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] p-4 w-72 space-y-4"
+              className="absolute right-2 sm:right-4 z-40 bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] p-4 w-[min(288px,calc(100vw-16px))] space-y-4"
               style={{ top: '3.25rem' }}
             >
               {/* Close */}
@@ -311,11 +366,11 @@ export const ReaderBottomBar = ({
   const { currentPage, totalPages, isPageBookmarked } = useReaderStore()
   const { currentRoom } = useRoomStore()
   const progress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0
-  const onlineCount = currentRoom?.users?.filter(u => u.isOnline).length ?? 0
+  const onlineCount = currentRoom?.participants?.filter(u => u.isOnline).length ?? 0
   const bookmarked = isPageBookmarked(currentPage)
 
   return (
-    <div className="flex items-center gap-1 px-2 h-11 border-t border-[var(--border)] bg-[var(--surface-0)] flex-shrink-0 safe-bottom select-none">
+    <div className="flex items-center gap-1 px-2 h-12 sm:h-11 border-t border-[var(--border)] bg-[var(--surface-0)] flex-shrink-0 safe-bottom select-none">
       {/* Prev */}
       <Tooltip content="Previous page (swipe right on mobile)">
         <IconButton onClick={onPrevPage} disabled={currentPage === 0} variant="ghost">

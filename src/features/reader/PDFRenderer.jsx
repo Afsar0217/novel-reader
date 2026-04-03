@@ -7,6 +7,8 @@ import { AnnotationToolbar } from './TextLayer'
 import { ReadingRuler } from './ReadingRuler'
 
 const PAGE_GAP = 24
+// Natural PDF page width in points (A4 / US Letter portrait)
+const NATURAL_PDF_WIDTH = 595
 
 /**
  * PDFRenderer — continuous scroll view.
@@ -27,8 +29,21 @@ export const PDFRenderer = ({ onScroll, readingContainerRef, canInteract = true,
   const containerRef = readingContainerRef || internalRef
   const [pageHeights, setPageHeights] = useState({})
   const [visiblePage, setVisiblePage] = useState(0)
+  const [containerWidth, setContainerWidth] = useState(0)
   const scrollRestored = useRef(false)
   const totalPages = pdfDocument?.numPages || 0
+
+  /* ── Measure container width for responsive PDF scaling ─────── */
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setContainerWidth(el.clientWidth)
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [pdfDocument])
 
   // Restore saved scroll position on load
   useEffect(() => {
@@ -95,7 +110,12 @@ export const PDFRenderer = ({ onScroll, readingContainerRef, canInteract = true,
     setCurrentPage(pageIndex)
   }, [setCurrentPage])
 
-  const scale = Math.max(0.5, Math.min(3, (preferences.fontSize || 16) / 16 * 1.5))
+  // Responsive scale: fit pages to the container width, then apply user font-size preference
+  const PADDING = 32  // px-4 on both sides = 32px total
+  const userFontScale = (preferences.fontSize || 16) / 16
+  const availW = containerWidth > 0 ? containerWidth - PADDING : 760
+  const autoScale = availW / NATURAL_PDF_WIDTH
+  const scale = Math.max(0.4, Math.min(2.5, autoScale * userFontScale))
 
   if (!pdfDocument) {
     return (
@@ -117,7 +137,7 @@ export const PDFRenderer = ({ onScroll, readingContainerRef, canInteract = true,
       {rulerEnabled && <ReadingRuler containerRef={containerRef} />}
 
       <div
-        className="py-6 px-4 mx-auto"
+        className="py-4 sm:py-6 px-4 mx-auto w-full"
         style={{ maxWidth: 900 }}
       >
         {Array.from({ length: totalPages }, (_, i) => (

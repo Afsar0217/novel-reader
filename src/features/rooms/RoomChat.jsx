@@ -171,7 +171,7 @@ export const RoomChat = ({ open, onClose, sendChatMessage, setChatPanelOpen }) =
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 320 }}
           transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-          className="absolute right-0 top-0 bottom-0 w-80 bg-[var(--surface-0)] border-l border-[var(--border)] shadow-[var(--shadow-lg)] z-30 flex flex-col"
+          className="absolute inset-y-0 right-0 w-full sm:w-80 bg-[var(--surface-0)] border-l border-[var(--border)] shadow-[var(--shadow-lg)] z-30 flex flex-col"
         >
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
